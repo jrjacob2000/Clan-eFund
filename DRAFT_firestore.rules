@@ -1,0 +1,317 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net: Default-deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Hardened Global Helpers
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+
+    // Bootstrapped Admin: Only jrjacob2000@gmail.com (with verified email) or an explicit /admins/{uid} document can manage records
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == 'jrjacob2000@gmail.com' ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isParentLedgerExist(ledgerId) {
+      return exists(/databases/$(database)/documents/ledgers/$(ledgerId)) &&
+        get(/databases/$(database)/documents/ledgers/$(ledgerId)).data.currency == 'PHP';
+    }
+
+    function isParentLedgerAdmin(ledgerId) {
+      return isAdmin() &&
+        exists(/databases/$(database)/documents/ledgers/$(ledgerId)) &&
+        get(/databases/$(database)/documents/ledgers/$(ledgerId)).data.ownerId == request.auth.uid;
+    }
+
+    // Validation Blueprint: LedgerConfig
+    function isValidLedgerConfig(data) {
+      return data.keys().hasAll([
+          'ownerId',
+          'clanName',
+          'currency',
+          'cashReserveTarget',
+          'priorIncluded',
+          'priorLabel',
+          'priorDate',
+          'priorAmountOnHand',
+          'priorBpiMoneyMarket',
+          'priorBpiShortTerm',
+          'members',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'ownerId',
+          'clanName',
+          'currency',
+          'cashReserveTarget',
+          'priorIncluded',
+          'priorLabel',
+          'priorDate',
+          'priorAmountOnHand',
+          'priorBpiMoneyMarket',
+          'priorBpiShortTerm',
+          'members',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.ownerId is string &&
+        data.ownerId.size() >= 1 &&
+        data.ownerId.size() <= 128 &&
+        data.ownerId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.ownerId == request.auth.uid &&
+        data.clanName is string &&
+        data.clanName.size() >= 1 &&
+        data.clanName.size() <= 120 &&
+        data.currency is string &&
+        data.currency.size() <= 10 &&
+        data.currency in ['PHP'] &&
+        data.cashReserveTarget is number &&
+        data.cashReserveTarget >= 0 &&
+        data.cashReserveTarget <= 100000000 &&
+        data.priorIncluded is bool &&
+        data.priorLabel is string &&
+        data.priorLabel.size() >= 1 &&
+        data.priorLabel.size() <= 120 &&
+        data.priorDate is string &&
+        data.priorDate.size() >= 1 &&
+        data.priorDate.size() <= 32 &&
+        data.priorAmountOnHand is number &&
+        data.priorAmountOnHand >= -100000000 &&
+        data.priorAmountOnHand <= 100000000 &&
+        data.priorBpiMoneyMarket is number &&
+        data.priorBpiMoneyMarket >= -100000000 &&
+        data.priorBpiMoneyMarket <= 100000000 &&
+        data.priorBpiShortTerm is number &&
+        data.priorBpiShortTerm >= -100000000 &&
+        data.priorBpiShortTerm <= 100000000 &&
+        data.members is list &&
+        data.members.size() >= 1 &&
+        data.members.size() <= 30 &&
+        data.members[0] is string &&
+        data.members[0].size() >= 1 &&
+        data.members[0].size() <= 60 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    // Validation Blueprint: Transaction
+    function isValidTransaction(data) {
+      return data.keys().hasAll([
+          'ledgerId',
+          'ownerId',
+          'rowRef',
+          'date',
+          'displayDate',
+          'description',
+          'category',
+          'memberOrBeneficiary',
+          'amountOnHand',
+          'bpiMoneyMarket',
+          'bpiShortTerm',
+          'highlightAlert',
+          'notes',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'ledgerId',
+          'ownerId',
+          'rowRef',
+          'date',
+          'displayDate',
+          'description',
+          'category',
+          'memberOrBeneficiary',
+          'amountOnHand',
+          'bpiMoneyMarket',
+          'bpiShortTerm',
+          'highlightAlert',
+          'notes',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.ledgerId is string &&
+        data.ledgerId.size() >= 1 &&
+        data.ledgerId.size() <= 128 &&
+        data.ledgerId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.ownerId is string &&
+        data.ownerId.size() >= 1 &&
+        data.ownerId.size() <= 128 &&
+        data.ownerId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.ownerId == request.auth.uid &&
+        data.rowRef is number &&
+        data.rowRef >= 0 &&
+        data.rowRef <= 1000000 &&
+        data.date is string &&
+        data.date.size() >= 1 &&
+        data.date.size() <= 32 &&
+        data.displayDate is string &&
+        data.displayDate.size() >= 1 &&
+        data.displayDate.size() <= 32 &&
+        data.description is string &&
+        data.description.size() >= 1 &&
+        data.description.size() <= 200 &&
+        data.category is string &&
+        data.category.size() <= 40 &&
+        data.category in [
+          'Contribution',
+          'Medical Disbursement',
+          'Internal Transfer',
+          'Reimbursement',
+          'Investment Yield',
+          'Opening Balance'
+        ] &&
+        data.memberOrBeneficiary is string &&
+        data.memberOrBeneficiary.size() >= 1 &&
+        data.memberOrBeneficiary.size() <= 100 &&
+        data.amountOnHand is number &&
+        data.amountOnHand >= -100000000 &&
+        data.amountOnHand <= 100000000 &&
+        data.bpiMoneyMarket is number &&
+        data.bpiMoneyMarket >= -100000000 &&
+        data.bpiMoneyMarket <= 100000000 &&
+        data.bpiShortTerm is number &&
+        data.bpiShortTerm >= -100000000 &&
+        data.bpiShortTerm <= 100000000 &&
+        data.highlightAlert is bool &&
+        data.notes is string &&
+        data.notes.size() <= 500 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    // Collection: /admins/{adminUid} (Read-only from client; managed only via server/console)
+    match /admins/{adminUid} {
+      allow get: if isSignedIn() && isValidId(adminUid) && adminUid == request.auth.uid;
+      allow list, create, update, delete: if false;
+    }
+
+    // Collection: /ledgers/{ledgerId}
+    match /ledgers/{ledgerId} {
+      // View-Only Contributors and Admin can read the shared clan ledger ('clan-efund-main')
+      allow get: if isValidId(ledgerId) &&
+        ledgerId == 'clan-efund-main' &&
+        (resource == null || existing().currency == 'PHP');
+
+      allow list: if false;
+
+      // ONLY the Admin (jrjacob2000@gmail.com) can create or update the ledger configuration
+      allow create: if isAdmin() &&
+        isValidId(ledgerId) &&
+        ledgerId == 'clan-efund-main' &&
+        isValidLedgerConfig(incoming()) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+
+      allow update: if isAdmin() &&
+        isValidId(ledgerId) &&
+        ledgerId == 'clan-efund-main' &&
+        isValidLedgerConfig(incoming()) &&
+        existing().ownerId == request.auth.uid &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (
+          // Action: Admin updates Opening Balances, Members, or Reserve Target
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'clanName',
+            'cashReserveTarget',
+            'priorIncluded',
+            'priorLabel',
+            'priorDate',
+            'priorAmountOnHand',
+            'priorBpiMoneyMarket',
+            'priorBpiShortTerm',
+            'members',
+            'updatedAt'
+          ])
+        );
+
+      allow delete: if false;
+
+      // Subcollection: /ledgers/{ledgerId}/transactions/{transactionId}
+      match /transactions/{transactionId} {
+        // View-Only Contributors and Admin can read transactions belonging to 'clan-efund-main'
+        allow get: if isValidId(ledgerId) &&
+          isValidId(transactionId) &&
+          ledgerId == 'clan-efund-main' &&
+          existing().ledgerId == 'clan-efund-main' &&
+          isParentLedgerExist(ledgerId);
+
+        // Cost-optimized list rule: enforces resource.data.ledgerId == 'clan-efund-main'
+        allow list: if ledgerId == 'clan-efund-main' &&
+          existing().ledgerId == 'clan-efund-main';
+
+        // ONLY the Admin (jrjacob2000@gmail.com) can create, update, or delete transactions
+        allow create: if isAdmin() &&
+          isValidId(ledgerId) &&
+          isValidId(transactionId) &&
+          ledgerId == 'clan-efund-main' &&
+          isValidTransaction(incoming()) &&
+          incoming().ledgerId == ledgerId &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time &&
+          isParentLedgerAdmin(ledgerId);
+
+        allow update: if isAdmin() &&
+          isValidId(ledgerId) &&
+          isValidId(transactionId) &&
+          ledgerId == 'clan-efund-main' &&
+          isValidTransaction(incoming()) &&
+          existing().ownerId == request.auth.uid &&
+          incoming().ownerId == existing().ownerId &&
+          incoming().ledgerId == existing().ledgerId &&
+          incoming().ledgerId == ledgerId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          (
+            // Action: Admin edits transaction details
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'rowRef',
+              'date',
+              'displayDate',
+              'description',
+              'category',
+              'memberOrBeneficiary',
+              'amountOnHand',
+              'bpiMoneyMarket',
+              'bpiShortTerm',
+              'highlightAlert',
+              'notes',
+              'updatedAt'
+            ])
+          ) &&
+          isParentLedgerAdmin(ledgerId);
+
+        allow delete: if isAdmin() &&
+          isValidId(ledgerId) &&
+          isValidId(transactionId) &&
+          ledgerId == 'clan-efund-main' &&
+          existing().ownerId == request.auth.uid &&
+          existing().ledgerId == ledgerId &&
+          isParentLedgerAdmin(ledgerId);
+      }
+    }
+  }
+}

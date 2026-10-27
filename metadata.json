@@ -1,0 +1,6 @@
+{
+  "name": "Clan E-Fund Ledger",
+  "description": "Collaborative emergency fund ledger and investment tracker for clan contributions, medical disbursements, and BPI fund allocations.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

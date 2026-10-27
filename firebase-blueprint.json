@@ -1,0 +1,269 @@
+{
+  "entities": {
+    "LedgerConfig": {
+      "title": "LedgerConfig",
+      "description": "Configuration, opening balances, and member list for a clan emergency fund ledger.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "description": "UID of the authenticated user who owns this ledger.",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "clanName": {
+          "type": "string",
+          "description": "Display name of the clan emergency fund.",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "currency": {
+          "type": "string",
+          "description": "ISO currency code for the ledger.",
+          "enum": ["PHP"],
+          "maxLength": 10
+        },
+        "cashReserveTarget": {
+          "type": "number",
+          "description": "Recommended liquid cash floor on hand."
+        },
+        "priorIncluded": {
+          "type": "boolean",
+          "description": "Whether the opening balance forward is included in totals."
+        },
+        "priorLabel": {
+          "type": "string",
+          "description": "Label for the opening balance forward.",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "priorDate": {
+          "type": "string",
+          "description": "Reference date for the opening balance forward.",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "priorAmountOnHand": {
+          "type": "number",
+          "description": "Opening Cash on Hand balance prior to April 27, 2026."
+        },
+        "priorBpiMoneyMarket": {
+          "type": "number",
+          "description": "Opening BPI Money Market Fund balance prior to April 27, 2026."
+        },
+        "priorBpiShortTerm": {
+          "type": "number",
+          "description": "Opening BPI Short Term Fund balance prior to April 27, 2026."
+        },
+        "members": {
+          "type": "array",
+          "description": "Bounded list of clan contributor names (max 30)."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the ledger was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the ledger was last updated."
+        }
+      },
+      "required": [
+        "ownerId",
+        "clanName",
+        "currency",
+        "cashReserveTarget",
+        "priorIncluded",
+        "priorLabel",
+        "priorDate",
+        "priorAmountOnHand",
+        "priorBpiMoneyMarket",
+        "priorBpiShortTerm",
+        "members",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "A single contribution, medical disbursement, transfer, or yield entry in the clan E-Fund ledger.",
+      "type": "object",
+      "properties": {
+        "ledgerId": {
+          "type": "string",
+          "description": "Parent ledger ID.",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "UID of the user who owns the parent ledger.",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "rowRef": {
+          "type": "number",
+          "description": "Sequential reference number."
+        },
+        "date": {
+          "type": "string",
+          "description": "ISO date string YYYY-MM-DD.",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "displayDate": {
+          "type": "string",
+          "description": "Formatted display date string.",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "description": {
+          "type": "string",
+          "description": "Transaction title or description.",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "category": {
+          "type": "string",
+          "description": "Classification of the transaction.",
+          "enum": [
+            "Contribution",
+            "Medical Disbursement",
+            "Internal Transfer",
+            "Reimbursement",
+            "Investment Yield",
+            "Opening Balance",
+            "Member Loan",
+            "Loan Repayment"
+          ],
+          "maxLength": 40
+        },
+        "memberOrBeneficiary": {
+          "type": "string",
+          "description": "Clan member or beneficiary associated with the transaction.",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "amountOnHand": {
+          "type": "number",
+          "description": "PHP amount added to or deducted from Cash on Hand."
+        },
+        "bpiMoneyMarket": {
+          "type": "number",
+          "description": "PHP amount added to or deducted from BPI Money Market Fund."
+        },
+        "bpiShortTerm": {
+          "type": "number",
+          "description": "PHP amount added to or deducted from BPI Short Term Fund."
+        },
+        "memberLoan": {
+          "type": "number",
+          "description": "PHP amount added to or deducted from Member Loan / Receivable bucket."
+        },
+        "highlightAlert": {
+          "type": "boolean",
+          "description": "Whether this transaction is flagged as an urgent medical disbursement."
+        },
+        "notes": {
+          "type": "string",
+          "description": "Optional audit note or receipt reference.",
+          "maxLength": 500
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the transaction was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the transaction was last updated."
+        }
+      },
+      "required": [
+        "ledgerId",
+        "ownerId",
+        "rowRef",
+        "date",
+        "displayDate",
+        "description",
+        "category",
+        "memberOrBeneficiary",
+        "amountOnHand",
+        "bpiMoneyMarket",
+        "bpiShortTerm",
+        "highlightAlert",
+        "notes",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "MamasSavingsDoc": {
+      "title": "MamasSavingsDoc",
+      "description": "Private savings ledger and record state strictly restricted to the account manager (jrjacob2000@gmail.com).",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "description": "UID of the owner/admin user (jrjacob2000@gmail.com).",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "description": "Ledger title."
+        },
+        "investBalance": {
+          "type": "number",
+          "description": "Invest fund balance in PHP."
+        },
+        "mamaAtmBalance": {
+          "type": "number",
+          "description": "Mama ATM balance in PHP."
+        },
+        "loanToMhariz": {
+          "type": "number",
+          "description": "Loan receivable from Mhariz in PHP."
+        },
+        "totalSavings": {
+          "type": "number",
+          "description": "Total combined savings in PHP."
+        },
+        "records": {
+          "type": "array",
+          "description": "Individual deposit and withdrawal transactions."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the savings document was last updated."
+        }
+      },
+      "required": [
+        "ownerId",
+        "title",
+        "investBalance",
+        "mamaAtmBalance",
+        "loanToMhariz",
+        "totalSavings",
+        "records"
+      ]
+    }
+  },
+  "firestore": {
+    "/ledgers/{ledgerId}": {
+      "schema": { "$ref": "#/entities/LedgerConfig" },
+      "description": "Stores the clan emergency fund configuration and opening balances owned by an authenticated user."
+    },
+    "/ledgers/{ledgerId}/transactions/{transactionId}": {
+      "schema": { "$ref": "#/entities/Transaction" },
+      "description": "Stores individual E-Fund ledger transactions belonging to a specific ledger."
+    },
+    "/mamas_savings/{docId}": {
+      "schema": { "$ref": "#/entities/MamasSavingsDoc" },
+      "description": "Private personal savings account strictly accessible only by the authorized manager (jrjacob2000@gmail.com)."
+    }
+  }
+}
