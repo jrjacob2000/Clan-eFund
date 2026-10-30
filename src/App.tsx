@@ -78,7 +78,7 @@ type FilterTab =
 type AccountFilter = 'ALL' | 'amountOnHand' | 'bpiMoneyMarket' | 'bpiShortTerm' | 'memberLoan';
 
 const LOCAL_STORAGE_CACHE_KEY = 'clan_efund_working_copy_v6';
-const MAMAS_SAVINGS_CACHE_KEY = 'mamas_savings_working_copy_v4';
+const MAMAS_SAVINGS_CACHE_KEY = 'mamas_savings_working_copy_v7';
 
 export const LEDGER_MONTH_OPTIONS = [
   { value: 'ALL', label: 'All Months', short: 'All' },

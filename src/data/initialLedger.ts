@@ -82,151 +82,151 @@ export const MAMAS_SAVINGS_DATA: MamasSavingsState = {
   loanToMhariz: 40000.0,
   totalSavings: 63200.0,
   records: [
-  {
-    "rowRef": 3,
-    "date": "2025-06-30",
-    "displayDate": "45838.0",
-    "invest": 5000.0,
-    "mamaAtm": 0.0,
-    "notes": ""
-  },
-  {
-    "rowRef": 4,
-    "date": "2025-07-29",
-    "displayDate": "45867.0",
-    "invest": 5000.0,
-    "mamaAtm": 0.0,
-    "notes": ""
-  },
-  {
-    "rowRef": 5,
-    "date": "2025-08-29",
-    "displayDate": "45898.0",
-    "invest": 5000.0,
-    "mamaAtm": 0.0,
-    "notes": ""
-  },
-  {
-    "rowRef": 6,
-    "date": "2025-09-30",
-    "displayDate": "45930.0",
-    "invest": 5000.0,
-    "mamaAtm": 0.0,
-    "notes": ""
-  },
-  {
-    "rowRef": 7,
-    "date": "2025-10-28",
-    "displayDate": "45958.0",
-    "invest": 5000.0,
-    "mamaAtm": 0.0,
-    "notes": ""
-  },
-  {
-    "rowRef": 8,
-    "date": "2025-11-27",
-    "displayDate": "11/27/25",
-    "invest": 5000.0,
-    "mamaAtm": 0.0,
-    "notes": ""
-  },
-  {
-    "rowRef": 9,
-    "date": "2025-12-30",
-    "displayDate": "46021.0",
-    "invest": 5000.0,
-    "mamaAtm": 0.0,
-    "notes": ""
-  },
-  {
-    "rowRef": 10,
-    "date": "2026-01-28",
-    "displayDate": "46050.0",
-    "invest": 5000.0,
-    "mamaAtm": 0.0,
-    "notes": ""
-  },
-  {
-    "rowRef": 11,
-    "date": "2026-02-28",
-    "displayDate": "46081.0",
-    "invest": 5000.0,
-    "mamaAtm": 0.0,
-    "notes": ""
-  },
-  {
-    "rowRef": 12,
-    "date": "2026-03-28",
-    "displayDate": "46109.0",
-    "invest": 5000.0,
-    "mamaAtm": 0.0,
-    "notes": ""
-  },
-  {
-    "rowRef": 13,
-    "date": "2026-04-09",
-    "displayDate": "46121.0",
-    "invest": -16800.0,
-    "mamaAtm": 0.0,
-    "notes": ""
-  },
-  {
-    "rowRef": 14,
-    "date": "2026-04-27",
-    "displayDate": "46139.0",
-    "invest": 5000.0,
-    "mamaAtm": 0.0,
-    "notes": ""
-  },
-  {
-    "rowRef": 15,
-    "date": "2026-05-27",
-    "displayDate": "46169.0",
-    "invest": 5000.0,
-    "mamaAtm": 0.0,
-    "notes": ""
-  },
-  {
-    "rowRef": 16,
-    "date": "2026-06-30",
-    "displayDate": "46203.0",
-    "invest": 5000.0,
-    "mamaAtm": 0.0,
-    "notes": ""
-  },
-  {
-    "rowRef": 17,
-    "date": "2026-07-29",
-    "displayDate": "46232.0",
-    "invest": 0.0,
-    "mamaAtm": 5000.0,
-    "notes": ""
-  },
-  {
-    "rowRef": 18,
-    "date": "2026-08-04",
-    "displayDate": "46238.0",
-    "invest": -40000.0,
-    "mamaAtm": 0.0,
-    "notes": ""
-  },
-  {
-    "rowRef": 19,
-    "date": "2026-08-30",
-    "displayDate": "46264.0",
-    "invest": 0.0,
-    "mamaAtm": 5000.0,
-    "notes": ""
-  },
-  {
-    "rowRef": 20,
-    "date": "2026-09-30",
-    "displayDate": "46295.0",
-    "invest": 0.0,
-    "mamaAtm": 5000.0,
-    "notes": ""
-  }
-] as MamasSavingsEntry[]
+    {
+      rowRef: 3,
+      date: '2025-06-30',
+      displayDate: 'Jun 30, 2025',
+      invest: 5000.0,
+      mamaAtm: 0.0,
+      notes: 'Monthly allocation to Invest Fund'
+    },
+    {
+      rowRef: 4,
+      date: '2025-07-29',
+      displayDate: 'Jul 29, 2025',
+      invest: 5000.0,
+      mamaAtm: 0.0,
+      notes: 'Monthly allocation to Invest Fund'
+    },
+    {
+      rowRef: 5,
+      date: '2025-08-29',
+      displayDate: 'Aug 29, 2025',
+      invest: 5000.0,
+      mamaAtm: 0.0,
+      notes: 'Monthly allocation to Invest Fund'
+    },
+    {
+      rowRef: 6,
+      date: '2025-09-30',
+      displayDate: 'Sep 30, 2025',
+      invest: 5000.0,
+      mamaAtm: 0.0,
+      notes: 'Monthly allocation to Invest Fund'
+    },
+    {
+      rowRef: 7,
+      date: '2025-10-28',
+      displayDate: 'Oct 28, 2025',
+      invest: 5000.0,
+      mamaAtm: 0.0,
+      notes: 'Monthly allocation to Invest Fund'
+    },
+    {
+      rowRef: 8,
+      date: '2025-11-27',
+      displayDate: 'Nov 27, 2025',
+      invest: 5000.0,
+      mamaAtm: 0.0,
+      notes: 'Monthly allocation to Invest Fund'
+    },
+    {
+      rowRef: 9,
+      date: '2025-12-30',
+      displayDate: 'Dec 30, 2025',
+      invest: 5000.0,
+      mamaAtm: 0.0,
+      notes: 'Monthly allocation to Invest Fund'
+    },
+    {
+      rowRef: 10,
+      date: '2026-01-28',
+      displayDate: 'Jan 28, 2026',
+      invest: 5000.0,
+      mamaAtm: 0.0,
+      notes: 'Monthly allocation to Invest Fund'
+    },
+    {
+      rowRef: 11,
+      date: '2026-02-28',
+      displayDate: 'Feb 28, 2026',
+      invest: 5000.0,
+      mamaAtm: 0.0,
+      notes: 'Monthly allocation to Invest Fund'
+    },
+    {
+      rowRef: 12,
+      date: '2026-03-28',
+      displayDate: 'Mar 28, 2026',
+      invest: 5000.0,
+      mamaAtm: 0.0,
+      notes: 'Monthly allocation to Invest Fund'
+    },
+    {
+      rowRef: 13,
+      date: '2026-04-09',
+      displayDate: 'Apr 9, 2026',
+      invest: -16800.0,
+      mamaAtm: 0.0,
+      notes: 'Invest Fund withdrawal / disbursement'
+    },
+    {
+      rowRef: 14,
+      date: '2026-04-27',
+      displayDate: 'Apr 27, 2026',
+      invest: 5000.0,
+      mamaAtm: 0.0,
+      notes: 'Monthly allocation to Invest Fund'
+    },
+    {
+      rowRef: 15,
+      date: '2026-05-27',
+      displayDate: 'May 27, 2026',
+      invest: 5000.0,
+      mamaAtm: 0.0,
+      notes: 'Monthly allocation to Invest Fund'
+    },
+    {
+      rowRef: 16,
+      date: '2026-06-30',
+      displayDate: 'Jun 30, 2026',
+      invest: 5000.0,
+      mamaAtm: 0.0,
+      notes: 'Monthly allocation to Invest Fund'
+    },
+    {
+      rowRef: 17,
+      date: '2026-07-29',
+      displayDate: 'Jul 29, 2026',
+      invest: 0.0,
+      mamaAtm: 5000.0,
+      notes: 'Monthly deposit to Mama ATM'
+    },
+    {
+      rowRef: 18,
+      date: '2026-08-04',
+      displayDate: 'Aug 4, 2026',
+      invest: -40000.0,
+      mamaAtm: 0.0,
+      notes: 'Hiram ni Mhariz (Loan from Invest Fund)'
+    },
+    {
+      rowRef: 19,
+      date: '2026-08-30',
+      displayDate: 'Aug 30, 2026',
+      invest: 0.0,
+      mamaAtm: 5000.0,
+      notes: 'Monthly deposit to Mama ATM'
+    },
+    {
+      rowRef: 20,
+      date: '2026-09-30',
+      displayDate: 'Sep 30, 2026',
+      invest: 0.0,
+      mamaAtm: 5000.0,
+      notes: 'Monthly deposit to Mama ATM'
+    }
+  ] as MamasSavingsEntry[]
 };
 
 export const EMPTY_MAMAS_SAVINGS_STATE: MamasSavingsState = {

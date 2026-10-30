@@ -555,7 +555,7 @@ export const DatabaseManagementView: React.FC<DatabaseManagementViewProps> = ({
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                       <div className="flex items-center gap-2.5 min-w-0">
                         <span className="font-mono font-bold text-xs text-purple-900 bg-purple-100 px-2 py-0.5 rounded shrink-0">
-                          Row {rec.rowRef}
+                          {rec.date}
                         </span>
                         <span className="font-mono text-xs text-slate-500 shrink-0">{rec.displayDate}</span>
                         <span className="text-slate-300">·</span>

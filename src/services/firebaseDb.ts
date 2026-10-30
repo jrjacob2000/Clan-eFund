@@ -714,6 +714,46 @@ export async function saveMamasSavingsToFirestore(
   }
 }
 
+function formatIsoOrSerialDate(isoDate?: string, rawDisplayDate?: string): string {
+  if (isoDate && /^\d{4}-\d{2}-\d{2}$/.test(isoDate.trim())) {
+    const [y, m, d] = isoDate.trim().split('-').map(Number);
+    const dt = new Date(y, m - 1, d);
+    if (!isNaN(dt.getTime())) {
+      return dt.toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric'
+      });
+    }
+  }
+  const serial = Number(rawDisplayDate || isoDate);
+  if (Number.isFinite(serial) && serial > 40000 && serial < 60000) {
+    const utcDays = Math.floor(serial - 25569);
+    const dt = new Date(utcDays * 86400 * 1000);
+    if (!isNaN(dt.getTime())) {
+      return dt.toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric'
+      });
+    }
+  }
+  return rawDisplayDate || isoDate || '—';
+}
+
+function defaultMamasRecordNote(invest: number, mamaAtm: number, rawNote?: string, isoDate?: string): string {
+  const trimmed = (rawNote || '').trim();
+  if (trimmed) return trimmed;
+  if (invest === -40000 || (isoDate === '2026-08-04' && invest < 0)) {
+    return 'Hiram ni Mhariz (Loan from Invest Fund)';
+  }
+  if (invest > 0 && mamaAtm === 0) return 'Monthly allocation to Invest Fund';
+  if (invest < 0 && mamaAtm === 0) return 'Invest Fund withdrawal / disbursement';
+  if (mamaAtm > 0 && invest === 0) return 'Monthly deposit to Mama ATM';
+  if (mamaAtm < 0 && invest === 0) return "Mama ATM cash withdrawal";
+  return "Mama's Savings transaction";
+}
+
 export function subscribeToMamasSavings(
   onUpdate: (data: MamasSavingsState) => void,
   onError?: (errMessage: string) => void
@@ -729,18 +769,30 @@ export function subscribeToMamasSavings(
         return;
       }
       const d = snap.data();
+      let needsFirestoreCleanup = false;
       const records = Array.isArray(d.records)
-        ? d.records.map((r: any, idx: number) => ({
-            rowRef: typeof r.rowRef === 'number' ? r.rowRef : idx + 1,
-            date: r.date || '2026-04-27',
-            displayDate: r.displayDate || r.date || '4/27/2026',
-            invest: typeof r.invest === 'number' ? r.invest : 0,
-            mamaAtm: typeof r.mamaAtm === 'number' ? r.mamaAtm : 0,
-            notes: r.notes || ''
-          }))
+        ? d.records.map((r: any, idx: number) => {
+            const isoDate = r.date || '2026-04-27';
+            const invest = typeof r.invest === 'number' ? r.invest : 0;
+            const mamaAtm = typeof r.mamaAtm === 'number' ? r.mamaAtm : 0;
+            const cleanDisplayDate = formatIsoOrSerialDate(isoDate, r.displayDate);
+            const cleanNotes = defaultMamasRecordNote(invest, mamaAtm, r.notes, isoDate);
+            if (r.displayDate !== cleanDisplayDate || !r.notes) {
+              needsFirestoreCleanup = true;
+            }
+            return {
+              id: r.id || `mamas-row-${r.rowRef ?? idx + 1}-${isoDate}`,
+              rowRef: typeof r.rowRef === 'number' ? r.rowRef : idx + 1,
+              date: isoDate,
+              displayDate: cleanDisplayDate,
+              invest,
+              mamaAtm,
+              notes: cleanNotes
+            };
+          })
         : MAMAS_SAVINGS_DATA.records;
 
-      onUpdate({
+      const normalizedState: MamasSavingsState = {
         title: d.title || MAMAS_SAVINGS_DATA.title,
         investBalance: typeof d.investBalance === 'number' ? d.investBalance : MAMAS_SAVINGS_DATA.investBalance,
         mamaAtmBalance: typeof d.mamaAtmBalance === 'number' ? d.mamaAtmBalance : MAMAS_SAVINGS_DATA.mamaAtmBalance,
@@ -748,7 +800,15 @@ export function subscribeToMamasSavings(
         totalSavings: typeof d.totalSavings === 'number' ? d.totalSavings : MAMAS_SAVINGS_DATA.totalSavings,
         lastUpdated: d.updatedAt && typeof d.updatedAt.toDate === 'function' ? d.updatedAt.toDate().toISOString() : undefined,
         records
-      });
+      };
+
+      if (needsFirestoreCleanup && auth.currentUser && isLedgerAdmin(auth.currentUser)) {
+        saveMamasSavingsToFirestore(auth.currentUser.uid, normalizedState).catch(() => {
+          // Ignore background cleanup errors
+        });
+      }
+
+      onUpdate(normalizedState);
     },
     (err) => {
       try {
@@ -759,4 +819,5 @@ export function subscribeToMamasSavings(
     }
   );
 }
+
 
