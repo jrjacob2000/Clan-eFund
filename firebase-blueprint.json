@@ -231,6 +231,10 @@
           "type": "number",
           "description": "Total combined savings in PHP."
         },
+        "bucketLabels": {
+          "type": "object",
+          "description": "Configurable account bucket display names stored as reference data in Firestore."
+        },
         "records": {
           "type": "array",
           "description": "Individual deposit and withdrawal transactions."

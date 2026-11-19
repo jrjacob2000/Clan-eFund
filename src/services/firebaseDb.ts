@@ -26,19 +26,97 @@ import {
 import firebaseConfig from '../../firebase-applet-config.json';
 import {
   ClanEFundDatabase,
+  DEFAULT_MAMAS_BUCKET_LABELS,
   EFundTransaction,
   EntryCategory,
   INITIAL_EFUND_DB,
+  MamasBucketCategory,
+  MamasBucketLabels,
+  MamasCustomBucket,
   MamasSavingsState,
   MAMAS_SAVINGS_DATA
 } from '../data/initialLedger';
 
-const app = initializeApp(firebaseConfig);
-export const auth = getAuth(app);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+const isAiStudioDevEnvironment =
+  typeof window !== 'undefined'
+    ? window.location.hostname === 'localhost' ||
+      window.location.hostname === '127.0.0.1' ||
+      window.location.hostname.endsWith('.run.app')
+    : true;
+
+const viteEnv: Record<string, any> =
+  typeof import.meta !== 'undefined' && (import.meta as any).env
+    ? (import.meta as any).env
+    : {};
+
+/**
+ * Production Firebase configuration locked to project `clan-e-fund-ledger`
+ * for GitHub Pages (`*.github.io`) and external production deployments.
+ */
+export const PRODUCTION_FIREBASE_CONFIG = {
+  projectId:
+    String(viteEnv.VITE_FIREBASE_PROJECT_ID || '').trim() || 'clan-e-fund-ledger',
+  appId:
+    String(viteEnv.VITE_FIREBASE_APP_ID || '').trim() ||
+    '1:305671424873:web:371467f93c769bd8db4bf8',
+  apiKey:
+    String(viteEnv.VITE_FIREBASE_API_KEY || '').trim() ||
+    'AIzaSyCX1r8h1nVjZYdSo5Nv32Bt6xJXrF7RI2c',
+  authDomain:
+    String(viteEnv.VITE_FIREBASE_AUTH_DOMAIN || '').trim() ||
+    'clan-e-fund-ledger.firebaseapp.com',
+  firestoreDatabaseId:
+    String(viteEnv.VITE_FIREBASE_DATABASE_ID || '').trim() ||
+    'ai-studio-clanefundledger-9007d667-4fc7-4cb4-b6d8-b403e74ca30a',
+  storageBucket:
+    String(viteEnv.VITE_FIREBASE_STORAGE_BUCKET || '').trim() ||
+    'clan-e-fund-ledger.firebasestorage.app',
+  messagingSenderId:
+    String(viteEnv.VITE_FIREBASE_MESSAGING_SENDER_ID || '').trim() || '305671424873',
+  measurementId: '',
+  oAuthClientId: '305671424873-ula1jht7cmukc3bthku0hklraa06l8ro.apps.googleusercontent.com',
+  recaptchaSiteKey: ''
+};
+
+/**
+ * In AI Studio preview / local dev (`*.run.app` / `localhost`), use `firebase-applet-config.json` (Dev Firebase).
+ * On external production hosts (e.g., GitHub Pages `*.github.io`), automatically use `PRODUCTION_FIREBASE_CONFIG` (`clan-e-fund-ledger`).
+ */
+export const ACTIVE_FIREBASE_ENV: 'aistudio-dev' | 'production' = isAiStudioDevEnvironment
+  ? 'aistudio-dev'
+  : 'production';
+
+export const ACTIVE_FIREBASE_ENV_LABEL =
+  ACTIVE_FIREBASE_ENV === 'aistudio-dev'
+    ? `AI Studio Dev Firebase (${firebaseConfig.projectId})`
+    : `Production Firebase (${PRODUCTION_FIREBASE_CONFIG.projectId})`;
+
+const DEFAULT_FIRESTORE_DB_ID =
+  'ai-studio-clanefundledger-9007d667-4fc7-4cb4-b6d8-b403e74ca30a';
+
+const activeFirebaseConfig: typeof PRODUCTION_FIREBASE_CONFIG =
+  ACTIVE_FIREBASE_ENV === 'production'
+    ? PRODUCTION_FIREBASE_CONFIG
+    : {
+        ...firebaseConfig,
+        firestoreDatabaseId:
+          (firebaseConfig as { firestoreDatabaseId?: string }).firestoreDatabaseId ||
+          DEFAULT_FIRESTORE_DB_ID
+      };
+
+const app = initializeApp(activeFirebaseConfig);
+export const auth: ReturnType<typeof getAuth> =
+  typeof window !== 'undefined' ? getAuth(app) : ({ currentUser: null } as any);
+export const db =
+  activeFirebaseConfig.firestoreDatabaseId &&
+  activeFirebaseConfig.firestoreDatabaseId !== '(default)'
+    ? getFirestore(app, activeFirebaseConfig.firestoreDatabaseId)
+    : getFirestore(app);
 
 export const EXPORT_JSON_FILENAME = 'clan-efund-ledger.json';
-export const FIRESTORE_DATABASE_ID = firebaseConfig.firestoreDatabaseId;
+export const FIREBASE_PROJECT_ID = activeFirebaseConfig.projectId;
+export const FIRESTORE_DATABASE_ID =
+  activeFirebaseConfig.firestoreDatabaseId || DEFAULT_FIRESTORE_DB_ID;
 export const SHARED_LEDGER_ID = 'clan-efund-main';
 export const ADMIN_EMAIL = 'jrjacob2000@gmail.com';
 
@@ -108,6 +186,7 @@ export function handleFirestoreError(
 }
 
 async function testConnection() {
+  if (typeof window === 'undefined') return;
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
   } catch (error) {
@@ -129,17 +208,17 @@ const VALID_CATEGORIES: EntryCategory[] = [
   'Loan Repayment'
 ];
 
-function sanitizeDocId(rawId: string): string {
+export function sanitizeDocId(rawId: string): string {
   const cleaned = rawId.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 128);
   return cleaned.length > 0 ? cleaned : `row-${Date.now()}`;
 }
 
-function clampNumber(val: number, min: number, max: number): number {
+export function clampNumber(val: number, min: number, max: number): number {
   if (!Number.isFinite(val)) return 0;
   return Math.max(min, Math.min(max, Number(val.toFixed(2))));
 }
 
-function sanitizeMembersList(members: string[]): string[] {
+export function sanitizeMembersList(members: string[]): string[] {
   const cleaned = members
     .map((m) => String(m || '').trim().slice(0, 60))
     .filter((m) => m.length >= 1);
@@ -149,7 +228,7 @@ function sanitizeMembersList(members: string[]): string[] {
   return cleaned.slice(0, 30);
 }
 
-function buildTransactionCreatePayload(
+export function buildTransactionCreatePayload(
   adminUid: string,
   tx: Omit<EFundTransaction, 'id'>,
   fallbackRowRef: number
@@ -188,7 +267,7 @@ function buildTransactionCreatePayload(
   };
 }
 
-function buildTransactionUpdatePayload(
+export function buildTransactionUpdatePayload(
   tx: Omit<EFundTransaction, 'id'>,
   fallbackRowRef: number
 ) {
@@ -223,14 +302,60 @@ function buildTransactionUpdatePayload(
   };
 }
 
+export const WORKSPACE_SCOPES = [
+  'https://www.googleapis.com/auth/drive.file',
+  'https://www.googleapis.com/auth/spreadsheets'
+];
+
+// In-memory cache for Google Workspace OAuth access token (never stored in localStorage/sessionStorage)
+let isSigningIn = false;
+let cachedAccessToken: string | null = null;
+
+export async function getAccessToken(): Promise<string | null> {
+  return cachedAccessToken;
+}
+
 export async function googleSignIn(): Promise<User | null> {
   const provider = new GoogleAuthProvider();
-  const result = await signInWithPopup(auth, provider);
-  return result.user;
+  for (const scope of WORKSPACE_SCOPES) {
+    provider.addScope(scope);
+  }
+  try {
+    isSigningIn = true;
+    const result = await signInWithPopup(auth, provider);
+    const credential = GoogleAuthProvider.credentialFromResult(result);
+    if (credential?.accessToken) {
+      cachedAccessToken = credential.accessToken;
+    }
+    return result.user;
+  } finally {
+    isSigningIn = false;
+  }
+}
+
+export async function authorizeGoogleDriveAccess(): Promise<string> {
+  const provider = new GoogleAuthProvider();
+  for (const scope of WORKSPACE_SCOPES) {
+    provider.addScope(scope);
+  }
+  provider.setCustomParameters({ prompt: 'consent' });
+  try {
+    isSigningIn = true;
+    const result = await signInWithPopup(auth, provider);
+    const credential = GoogleAuthProvider.credentialFromResult(result);
+    if (!credential?.accessToken) {
+      throw new Error('Failed to obtain Google Drive & Sheets access token.');
+    }
+    cachedAccessToken = credential.accessToken;
+    return cachedAccessToken;
+  } finally {
+    isSigningIn = false;
+  }
 }
 
 export async function logout(): Promise<void> {
   await signOut(auth);
+  cachedAccessToken = null;
 }
 
 export function initAuth(
@@ -239,8 +364,12 @@ export function initAuth(
 ): () => void {
   return onAuthStateChanged(auth, (user) => {
     if (user) {
+      if (!cachedAccessToken && !isSigningIn) {
+        cachedAccessToken = null;
+      }
       onAuthenticated(user);
     } else {
+      cachedAccessToken = null;
       onUnauthenticated();
     }
   });
@@ -289,10 +418,9 @@ export async function ensureSharedLedgerInitializedInFirestore(
     }
 
     const needsFullExcelMigration =
-      existingTxCount < INITIAL_EFUND_DB.transactions.length ||
+      existingTxCount <= 25 ||
       !firstRowSnap ||
-      !firstRowSnap.exists() ||
-      existingData?.priorIncluded === true;
+      !firstRowSnap.exists();
 
     if (needsFullExcelMigration) {
       await replaceEntireLedgerInFirestore(adminUid, INITIAL_EFUND_DB);
@@ -409,11 +537,11 @@ export function subscribeToSharedLedger(
   const emitIfReady = () => {
     if (!parentExists) return;
     if (!latestConfig && !latestTransactions) return;
-    // Prevent overwriting the full 107-row migrated dataset with a legacy pre-Excel 20-row snapshot
+    // Prevent overwriting the full migrated dataset with a legacy pre-Excel 20-row snapshot
     if (
       latestTransactions &&
       latestTransactions.length > 0 &&
-      latestTransactions.length < INITIAL_EFUND_DB.transactions.length
+      latestTransactions.length <= 25
     ) {
       return;
     }
@@ -684,12 +812,66 @@ export async function replaceEntireLedgerInFirestore(
 
 export const MAMAS_SAVINGS_DOC_ID = 'state';
 
+export function normalizeMamasBucketLabels(raw?: Partial<MamasBucketLabels>): MamasBucketLabels {
+  const rawInvest = (raw?.investLabel || '').trim();
+  const investLabel =
+    !rawInvest || /^invest fund( reserve)?$/i.test(rawInvest)
+      ? DEFAULT_MAMAS_BUCKET_LABELS.investLabel
+      : rawInvest.slice(0, 60);
+  const atmLabel = (raw?.atmLabel || '').trim().slice(0, 60) || DEFAULT_MAMAS_BUCKET_LABELS.atmLabel;
+  const loanLabel =
+    (raw?.loanLabel || '').trim().slice(0, 60) || DEFAULT_MAMAS_BUCKET_LABELS.loanLabel;
+
+  return {
+    investLabel,
+    atmLabel,
+    loanLabel
+  };
+}
+
+export function normalizeMamasCustomBuckets(raw?: any[]): MamasCustomBucket[] {
+  if (!Array.isArray(raw)) return [];
+  const validCategories: MamasBucketCategory[] = ['investment', 'liquid_cash', 'receivable'];
+  const seen = new Set<string>();
+  const result: MamasCustomBucket[] = [];
+
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const label = String(item.label || '').trim().slice(0, 60);
+    if (!label) continue;
+    const id =
+      String(item.id || '')
+        .trim()
+        .replace(/[^a-zA-Z0-9_-]/g, '_')
+        .slice(0, 48) ||
+      `bucket_${label.toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 32)}`;
+    if (seen.has(id)) continue;
+    seen.add(id);
+
+    const category: MamasBucketCategory = validCategories.includes(item.category)
+      ? item.category
+      : 'investment';
+    const description = item.description ? String(item.description).trim().slice(0, 120) : undefined;
+
+    result.push({
+      id,
+      label,
+      category,
+      ...(description ? { description } : {})
+    });
+  }
+
+  return result.slice(0, 20);
+}
+
 export async function saveMamasSavingsToFirestore(
   adminUid: string,
   state: MamasSavingsState
 ): Promise<void> {
   const docPath = `mamas_savings/${MAMAS_SAVINGS_DOC_ID}`;
   const docRef = doc(db, 'mamas_savings', MAMAS_SAVINGS_DOC_ID);
+  const bucketLabels = normalizeMamasBucketLabels(state.bucketLabels);
+  const customBuckets = normalizeMamasCustomBuckets(state.customBuckets);
 
   try {
     await setDoc(docRef, {
@@ -699,12 +881,21 @@ export async function saveMamasSavingsToFirestore(
       mamaAtmBalance: clampNumber(state.mamaAtmBalance, -100000000, 100000000),
       loanToMhariz: clampNumber(state.loanToMhariz, -100000000, 100000000),
       totalSavings: clampNumber(state.totalSavings, -100000000, 100000000),
+      bucketLabels,
+      customBuckets,
       records: state.records.map((r, i) => ({
+        id: String(r.id || `mamas-row-${r.rowRef ?? i + 1}-${r.date}`).slice(0, 64),
         rowRef: r.rowRef ?? i + 1,
         date: r.date,
         displayDate: r.displayDate || r.date,
         invest: clampNumber(r.invest, -100000000, 100000000),
         mamaAtm: clampNumber(r.mamaAtm, -100000000, 100000000),
+        ...(r.customBucketId
+          ? {
+              customBucketId: String(r.customBucketId).slice(0, 48),
+              customAmount: clampNumber(r.customAmount || 0, -100000000, 100000000)
+            }
+          : {}),
         notes: (r.notes || '').slice(0, 500)
       })),
       updatedAt: serverTimestamp()
@@ -714,7 +905,7 @@ export async function saveMamasSavingsToFirestore(
   }
 }
 
-function formatIsoOrSerialDate(isoDate?: string, rawDisplayDate?: string): string {
+export function formatIsoOrSerialDate(isoDate?: string, rawDisplayDate?: string): string {
   if (isoDate && /^\d{4}-\d{2}-\d{2}$/.test(isoDate.trim())) {
     const [y, m, d] = isoDate.trim().split('-').map(Number);
     const dt = new Date(y, m - 1, d);
@@ -741,16 +932,35 @@ function formatIsoOrSerialDate(isoDate?: string, rawDisplayDate?: string): strin
   return rawDisplayDate || isoDate || '—';
 }
 
-function defaultMamasRecordNote(invest: number, mamaAtm: number, rawNote?: string, isoDate?: string): string {
-  const trimmed = (rawNote || '').trim();
+export function defaultMamasRecordNote(
+  invest: number,
+  mamaAtm: number,
+  rawNote: string | undefined,
+  isoDate: string | undefined,
+  bucketLabels: MamasBucketLabels,
+  customBucketId?: string,
+  customAmount?: number,
+  customBuckets: MamasCustomBucket[] = []
+): string {
+  const trimmed = (rawNote || '')
+    .trim()
+    .replace(/Invest Fund Reserve/gi, bucketLabels.investLabel)
+    .replace(/Invest Fund/gi, bucketLabels.investLabel);
   if (trimmed) return trimmed;
-  if (invest === -40000 || (isoDate === '2026-08-04' && invest < 0)) {
-    return 'Hiram ni Mhariz (Loan from Invest Fund)';
+  if (customBucketId) {
+    const found = customBuckets.find((b) => b.id === customBucketId);
+    const label = found?.label || 'Custom Bucket';
+    return (customAmount || 0) >= 0
+      ? `Allocation to ${label}`
+      : `${label} withdrawal`;
   }
-  if (invest > 0 && mamaAtm === 0) return 'Monthly allocation to Invest Fund';
-  if (invest < 0 && mamaAtm === 0) return 'Invest Fund withdrawal / disbursement';
-  if (mamaAtm > 0 && invest === 0) return 'Monthly deposit to Mama ATM';
-  if (mamaAtm < 0 && invest === 0) return "Mama ATM cash withdrawal";
+  if (invest === -40000 || (isoDate === '2026-08-04' && invest < 0)) {
+    return `${bucketLabels.loanLabel} (Loan from ${bucketLabels.investLabel})`;
+  }
+  if (invest > 0 && mamaAtm === 0) return `Monthly allocation to ${bucketLabels.investLabel}`;
+  if (invest < 0 && mamaAtm === 0) return `${bucketLabels.investLabel} withdrawal / disbursement`;
+  if (mamaAtm > 0 && invest === 0) return `Monthly deposit to ${bucketLabels.atmLabel}`;
+  if (mamaAtm < 0 && invest === 0) return `${bucketLabels.atmLabel} cash withdrawal`;
   return "Mama's Savings transaction";
 }
 
@@ -770,14 +980,43 @@ export function subscribeToMamasSavings(
       }
       const d = snap.data();
       let needsFirestoreCleanup = false;
+      const bucketLabels = normalizeMamasBucketLabels(d.bucketLabels);
+      const customBuckets = normalizeMamasCustomBuckets(d.customBuckets);
+      if (
+        !d.bucketLabels ||
+        d.bucketLabels.investLabel !== bucketLabels.investLabel ||
+        d.bucketLabels.atmLabel !== bucketLabels.atmLabel ||
+        d.bucketLabels.loanLabel !== bucketLabels.loanLabel
+      ) {
+        needsFirestoreCleanup = true;
+      }
+
       const records = Array.isArray(d.records)
         ? d.records.map((r: any, idx: number) => {
             const isoDate = r.date || '2026-04-27';
             const invest = typeof r.invest === 'number' ? r.invest : 0;
             const mamaAtm = typeof r.mamaAtm === 'number' ? r.mamaAtm : 0;
+            const customBucketId =
+              typeof r.customBucketId === 'string' && r.customBucketId.trim()
+                ? r.customBucketId.trim()
+                : undefined;
+            const customAmount =
+              typeof r.customAmount === 'number' ? r.customAmount : undefined;
             const cleanDisplayDate = formatIsoOrSerialDate(isoDate, r.displayDate);
-            const cleanNotes = defaultMamasRecordNote(invest, mamaAtm, r.notes, isoDate);
-            if (r.displayDate !== cleanDisplayDate || !r.notes) {
+            const cleanNotes = defaultMamasRecordNote(
+              invest,
+              mamaAtm,
+              r.notes,
+              isoDate,
+              bucketLabels,
+              customBucketId,
+              customAmount,
+              customBuckets
+            );
+            const hasRawSerialDate =
+              Number.isFinite(Number(r.displayDate)) && Number(r.displayDate) > 40000;
+            const hasLegacyInvestNote = /Invest Fund/i.test(String(r.notes || ''));
+            if (hasRawSerialDate || hasLegacyInvestNote || !r.notes) {
               needsFirestoreCleanup = true;
             }
             return {
@@ -787,6 +1026,9 @@ export function subscribeToMamasSavings(
               displayDate: cleanDisplayDate,
               invest,
               mamaAtm,
+              ...(customBucketId
+                ? { customBucketId, customAmount: customAmount || 0 }
+                : {}),
               notes: cleanNotes
             };
           })
@@ -798,6 +1040,8 @@ export function subscribeToMamasSavings(
         mamaAtmBalance: typeof d.mamaAtmBalance === 'number' ? d.mamaAtmBalance : MAMAS_SAVINGS_DATA.mamaAtmBalance,
         loanToMhariz: typeof d.loanToMhariz === 'number' ? d.loanToMhariz : MAMAS_SAVINGS_DATA.loanToMhariz,
         totalSavings: typeof d.totalSavings === 'number' ? d.totalSavings : MAMAS_SAVINGS_DATA.totalSavings,
+        bucketLabels,
+        customBuckets,
         lastUpdated: d.updatedAt && typeof d.updatedAt.toDate === 'function' ? d.updatedAt.toDate().toISOString() : undefined,
         records
       };

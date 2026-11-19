@@ -29,6 +29,15 @@ export interface MemberMonthlyTarget {
   monthlyTarget: number;
 }
 
+export type MamasBucketCategory = 'investment' | 'liquid_cash' | 'receivable';
+
+export interface MamasCustomBucket {
+  id: string;
+  label: string;
+  category: MamasBucketCategory;
+  description?: string;
+}
+
 export interface MamasSavingsEntry {
   id?: string;
   rowRef: number;
@@ -36,8 +45,22 @@ export interface MamasSavingsEntry {
   displayDate: string;
   invest: number;
   mamaAtm: number;
+  customBucketId?: string;
+  customAmount?: number;
   notes?: string;
 }
+
+export interface MamasBucketLabels {
+  investLabel: string;
+  atmLabel: string;
+  loanLabel: string;
+}
+
+export const DEFAULT_MAMAS_BUCKET_LABELS: MamasBucketLabels = {
+  investLabel: 'BPI Short Term',
+  atmLabel: 'Mama ATM',
+  loanLabel: 'Hiram ni Mhariz'
+};
 
 export interface MamasSavingsState {
   title: string;
@@ -45,6 +68,8 @@ export interface MamasSavingsState {
   mamaAtmBalance: number;
   loanToMhariz: number;
   totalSavings: number;
+  bucketLabels?: MamasBucketLabels;
+  customBuckets?: MamasCustomBucket[];
   lastUpdated?: string;
   records: MamasSavingsEntry[];
 }
@@ -81,6 +106,7 @@ export const MAMAS_SAVINGS_DATA: MamasSavingsState = {
   mamaAtmBalance: 15000.0,
   loanToMhariz: 40000.0,
   totalSavings: 63200.0,
+  bucketLabels: DEFAULT_MAMAS_BUCKET_LABELS,
   records: [
     {
       rowRef: 3,
@@ -88,7 +114,7 @@ export const MAMAS_SAVINGS_DATA: MamasSavingsState = {
       displayDate: 'Jun 30, 2025',
       invest: 5000.0,
       mamaAtm: 0.0,
-      notes: 'Monthly allocation to Invest Fund'
+      notes: 'Monthly allocation to BPI Short Term'
     },
     {
       rowRef: 4,
@@ -96,7 +122,7 @@ export const MAMAS_SAVINGS_DATA: MamasSavingsState = {
       displayDate: 'Jul 29, 2025',
       invest: 5000.0,
       mamaAtm: 0.0,
-      notes: 'Monthly allocation to Invest Fund'
+      notes: 'Monthly allocation to BPI Short Term'
     },
     {
       rowRef: 5,
@@ -104,7 +130,7 @@ export const MAMAS_SAVINGS_DATA: MamasSavingsState = {
       displayDate: 'Aug 29, 2025',
       invest: 5000.0,
       mamaAtm: 0.0,
-      notes: 'Monthly allocation to Invest Fund'
+      notes: 'Monthly allocation to BPI Short Term'
     },
     {
       rowRef: 6,
@@ -112,7 +138,7 @@ export const MAMAS_SAVINGS_DATA: MamasSavingsState = {
       displayDate: 'Sep 30, 2025',
       invest: 5000.0,
       mamaAtm: 0.0,
-      notes: 'Monthly allocation to Invest Fund'
+      notes: 'Monthly allocation to BPI Short Term'
     },
     {
       rowRef: 7,
@@ -120,7 +146,7 @@ export const MAMAS_SAVINGS_DATA: MamasSavingsState = {
       displayDate: 'Oct 28, 2025',
       invest: 5000.0,
       mamaAtm: 0.0,
-      notes: 'Monthly allocation to Invest Fund'
+      notes: 'Monthly allocation to BPI Short Term'
     },
     {
       rowRef: 8,
@@ -128,7 +154,7 @@ export const MAMAS_SAVINGS_DATA: MamasSavingsState = {
       displayDate: 'Nov 27, 2025',
       invest: 5000.0,
       mamaAtm: 0.0,
-      notes: 'Monthly allocation to Invest Fund'
+      notes: 'Monthly allocation to BPI Short Term'
     },
     {
       rowRef: 9,
@@ -136,7 +162,7 @@ export const MAMAS_SAVINGS_DATA: MamasSavingsState = {
       displayDate: 'Dec 30, 2025',
       invest: 5000.0,
       mamaAtm: 0.0,
-      notes: 'Monthly allocation to Invest Fund'
+      notes: 'Monthly allocation to BPI Short Term'
     },
     {
       rowRef: 10,
@@ -144,7 +170,7 @@ export const MAMAS_SAVINGS_DATA: MamasSavingsState = {
       displayDate: 'Jan 28, 2026',
       invest: 5000.0,
       mamaAtm: 0.0,
-      notes: 'Monthly allocation to Invest Fund'
+      notes: 'Monthly allocation to BPI Short Term'
     },
     {
       rowRef: 11,
@@ -152,7 +178,7 @@ export const MAMAS_SAVINGS_DATA: MamasSavingsState = {
       displayDate: 'Feb 28, 2026',
       invest: 5000.0,
       mamaAtm: 0.0,
-      notes: 'Monthly allocation to Invest Fund'
+      notes: 'Monthly allocation to BPI Short Term'
     },
     {
       rowRef: 12,
@@ -160,7 +186,7 @@ export const MAMAS_SAVINGS_DATA: MamasSavingsState = {
       displayDate: 'Mar 28, 2026',
       invest: 5000.0,
       mamaAtm: 0.0,
-      notes: 'Monthly allocation to Invest Fund'
+      notes: 'Monthly allocation to BPI Short Term'
     },
     {
       rowRef: 13,
@@ -168,7 +194,7 @@ export const MAMAS_SAVINGS_DATA: MamasSavingsState = {
       displayDate: 'Apr 9, 2026',
       invest: -16800.0,
       mamaAtm: 0.0,
-      notes: 'Invest Fund withdrawal / disbursement'
+      notes: 'BPI Short Term withdrawal / disbursement'
     },
     {
       rowRef: 14,
@@ -176,7 +202,7 @@ export const MAMAS_SAVINGS_DATA: MamasSavingsState = {
       displayDate: 'Apr 27, 2026',
       invest: 5000.0,
       mamaAtm: 0.0,
-      notes: 'Monthly allocation to Invest Fund'
+      notes: 'Monthly allocation to BPI Short Term'
     },
     {
       rowRef: 15,
@@ -184,7 +210,7 @@ export const MAMAS_SAVINGS_DATA: MamasSavingsState = {
       displayDate: 'May 27, 2026',
       invest: 5000.0,
       mamaAtm: 0.0,
-      notes: 'Monthly allocation to Invest Fund'
+      notes: 'Monthly allocation to BPI Short Term'
     },
     {
       rowRef: 16,
@@ -192,7 +218,7 @@ export const MAMAS_SAVINGS_DATA: MamasSavingsState = {
       displayDate: 'Jun 30, 2026',
       invest: 5000.0,
       mamaAtm: 0.0,
-      notes: 'Monthly allocation to Invest Fund'
+      notes: 'Monthly allocation to BPI Short Term'
     },
     {
       rowRef: 17,
@@ -208,7 +234,7 @@ export const MAMAS_SAVINGS_DATA: MamasSavingsState = {
       displayDate: 'Aug 4, 2026',
       invest: -40000.0,
       mamaAtm: 0.0,
-      notes: 'Hiram ni Mhariz (Loan from Invest Fund)'
+      notes: 'Hiram ni Mhariz (Loan from BPI Short Term)'
     },
     {
       rowRef: 19,
@@ -238,11 +264,13 @@ export const EMPTY_MAMAS_SAVINGS_STATE: MamasSavingsState = {
   records: []
 };
 
+export const APP_VERSION = '1.4.0';
+
 export const INITIAL_EFUND_DB: ClanEFundDatabase = {
-  schemaVersion: 3,
+  schemaVersion: 4,
   clanName: 'Clan Emergency Fund (E-Fund)',
   currency: 'PHP',
-  lastUpdated: '2026-10-26T08:00:00.000Z',
+  lastUpdated: '2026-11-19T08:00:00.000Z',
   cashReserveTarget: 15000.0,
   bpiActualMarketValue: {
     bpiMoneyMarket: 78000.0,
@@ -1835,16 +1863,60 @@ export function calculateTotals(db: ClanEFundDatabase) {
 export function calculateMamasTotals(state: MamasSavingsState): MamasSavingsState {
   let investSum = 0;
   let mamaAtmSum = 0;
+  let customSum = 0;
+  let computedLoan = 0;
+  let hasLoanRecord = false;
+
+  const loanKeyword = (
+    state.bucketLabels?.loanLabel || DEFAULT_MAMAS_BUCKET_LABELS.loanLabel
+  )
+    .trim()
+    .toLowerCase();
 
   for (const rec of state.records) {
-    investSum += rec.invest || 0;
-    mamaAtmSum += rec.mamaAtm || 0;
+    const inv = Number(rec.invest) || 0;
+    const atm = Number(rec.mamaAtm) || 0;
+    investSum += inv;
+    mamaAtmSum += atm;
+    if (rec.customBucketId) {
+      customSum += Number(rec.customAmount) || 0;
+    }
+
+    const noteLower = (rec.notes || '').toLowerCase();
+    const mentionsLoan =
+      noteLower.includes('mhariz') ||
+      (loanKeyword.length > 0 && noteLower.includes(loanKeyword));
+
+    const isInitialMharizLoan =
+      inv === -40000 || (rec.date === '2026-08-04' && inv < 0);
+
+    if (isInitialMharizLoan || (mentionsLoan && inv < 0)) {
+      computedLoan += Math.abs(inv);
+      hasLoanRecord = true;
+    } else if (mentionsLoan && atm < 0) {
+      computedLoan += Math.abs(atm);
+      hasLoanRecord = true;
+    } else if (mentionsLoan && (atm > 0 || inv > 0)) {
+      computedLoan -= atm > 0 ? atm : inv;
+      hasLoanRecord = true;
+    }
   }
 
   const investBalance = Number(investSum.toFixed(2));
   const mamaAtmBalance = Number(mamaAtmSum.toFixed(2));
-  const loanToMhariz = Number((state.loanToMhariz || 0).toFixed(2));
-  const totalSavings = Number((investBalance + mamaAtmBalance + loanToMhariz).toFixed(2));
+  const loanToMhariz = Number(
+    Math.max(
+      0,
+      hasLoanRecord
+        ? computedLoan
+        : state.records.length === 0
+        ? 0
+        : state.loanToMhariz || 0
+    ).toFixed(2)
+  );
+  const totalSavings = Number(
+    (investBalance + mamaAtmBalance + loanToMhariz + customSum).toFixed(2)
+  );
 
   return {
     ...state,

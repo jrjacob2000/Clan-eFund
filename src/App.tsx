@@ -28,6 +28,7 @@ import {
   HelpCircle
 } from 'lucide-react';
 import {
+  APP_VERSION,
   ClanEFundDatabase,
   EFundTransaction,
   INITIAL_EFUND_DB,
@@ -62,6 +63,7 @@ import { DriveConfirmModal } from './components/DriveConfirmModal';
 import { MamasSavingsView } from './components/MamasSavingsView';
 import { DatabaseManagementView } from './components/DatabaseManagementView';
 import { HelpGuideView } from './components/HelpGuideView';
+import { PaginationBar } from './components/PaginationBar';
 
 export type ActiveAccount = 'clan_efund' | 'mamas_savings';
 type ActiveSection = 'dashboard' | 'ledger' | 'contributors' | 'medical' | 'database' | 'help';
@@ -281,7 +283,7 @@ export default function App() {
       const saved = localStorage.getItem(LOCAL_STORAGE_CACHE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (parsed && Array.isArray(parsed.transactions) && parsed.transactions.length >= 107) {
+        if (parsed && Array.isArray(parsed.transactions) && parsed.transactions.length > 25) {
           return {
             ...INITIAL_EFUND_DB,
             ...parsed
@@ -306,6 +308,16 @@ export default function App() {
   const [groupByMonth, setGroupByMonth] = useState<boolean>(true);
   const [showPriorBalanceConfig, setShowPriorBalanceConfig] = useState<boolean>(false);
   const [selectedMatrixYear, setSelectedMatrixYear] = useState<MatrixYear>('2026');
+
+  // Pagination state across all grids in Clan E-Fund
+  const [ledgerPage, setLedgerPage] = useState<number>(1);
+  const [ledgerPageSize, setLedgerPageSize] = useState<number>(15);
+  const [matrixPage, setMatrixPage] = useState<number>(1);
+  const [matrixPageSize, setMatrixPageSize] = useState<number>(8);
+  const [medicalPage, setMedicalPage] = useState<number>(1);
+  const [medicalPageSize, setMedicalPageSize] = useState<number>(10);
+  const [transferPage, setTransferPage] = useState<number>(1);
+  const [transferPageSize, setTransferPageSize] = useState<number>(10);
 
   // Mama's Personal Savings State (Strictly private to jrjacob2000@gmail.com)
   const [mamasState, setMamasState] = useState<MamasSavingsState>(EMPTY_MAMAS_SAVINGS_STATE);
@@ -792,7 +804,8 @@ export default function App() {
       'Member/Beneficiary',
       'Cash on Hand',
       'BPI Money Market Fund',
-      'BPI Short Term'
+      'BPI Short Term',
+      'Member Loans (Receivable)'
     ];
     const rows = db.transactions.map((t) => [
       `"${t.date}"`,
@@ -801,7 +814,8 @@ export default function App() {
       `"${t.memberOrBeneficiary}"`,
       t.amountOnHand.toFixed(2),
       t.bpiMoneyMarket.toFixed(2),
-      t.bpiShortTerm.toFixed(2)
+      t.bpiShortTerm.toFixed(2),
+      (t.memberLoan || 0).toFixed(2)
     ]);
     const currentTotals = calculateTotals(db);
     rows.push([
@@ -811,9 +825,10 @@ export default function App() {
       '""',
       currentTotals.amountOnHand.toFixed(2),
       currentTotals.bpiMoneyMarket.toFixed(2),
-      currentTotals.bpiShortTerm.toFixed(2)
+      currentTotals.bpiShortTerm.toFixed(2),
+      currentTotals.memberLoan.toFixed(2)
     ]);
-    rows.push(['""', '"Total Fund"', '""', '""', '', currentTotals.totalFund.toFixed(2), '']);
+    rows.push(['""', '"Total Fund"', '""', '""', '', currentTotals.totalFund.toFixed(2), '', '']);
 
     const csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -964,16 +979,37 @@ export default function App() {
     return { inflows, outflows, net, count: filteredRows.length };
   }, [filteredRows]);
 
-  // Group filtered rows by month for clean modern ledger sections
+  // Reset Activity Ledger page to 1 when filters/search/sort change
+  useEffect(() => {
+    setLedgerPage(1);
+  }, [
+    filterTab,
+    accountFilter,
+    memberFilter,
+    yearFilter,
+    monthFilter,
+    searchQuery,
+    sortOrder
+  ]);
+
+  const paginatedLedgerRows = useMemo(() => {
+    if (ledgerPageSize <= 0) return filteredRows;
+    const totalPages = Math.max(1, Math.ceil(filteredRows.length / ledgerPageSize));
+    const safePage = Math.min(Math.max(1, ledgerPage), totalPages);
+    const start = (safePage - 1) * ledgerPageSize;
+    return filteredRows.slice(start, start + ledgerPageSize);
+  }, [filteredRows, ledgerPage, ledgerPageSize]);
+
+  // Group paginated rows by month for clean modern ledger sections
   const groupedTransactions = useMemo(() => {
     const groups: {
       monthKey: string;
       monthLabel: string;
       netChange: number;
-      items: typeof filteredRows;
+      items: typeof paginatedLedgerRows;
     }[] = [];
 
-    for (const row of filteredRows) {
+    for (const row of paginatedLedgerRows) {
       const mKey = row.date.slice(0, 7);
       const lastGroup = groups[groups.length - 1];
       const rowNet = row.amountOnHand + row.bpiMoneyMarket + row.bpiShortTerm + (row.memberLoan || 0);
@@ -991,7 +1027,7 @@ export default function App() {
       }
     }
     return groups;
-  }, [filteredRows]);
+  }, [paginatedLedgerRows]);
 
   // Contributor summaries
   const contributorStats = useMemo(() => {
@@ -1059,6 +1095,14 @@ export default function App() {
       .sort((a, b) => b.totalContributed - a.totalContributed);
   }, [db]);
 
+  const paginatedMatrixContributors = useMemo(() => {
+    if (matrixPageSize <= 0) return contributorStats;
+    const totalPages = Math.max(1, Math.ceil(contributorStats.length / matrixPageSize));
+    const safePage = Math.min(Math.max(1, matrixPage), totalPages);
+    const start = (safePage - 1) * matrixPageSize;
+    return contributorStats.slice(start, start + matrixPageSize);
+  }, [contributorStats, matrixPage, matrixPageSize]);
+
   const medicalRows = useMemo(
     () =>
       [...rowsWithRunningTotals]
@@ -1067,6 +1111,14 @@ export default function App() {
     [rowsWithRunningTotals]
   );
 
+  const paginatedMedicalRows = useMemo(() => {
+    if (medicalPageSize <= 0) return medicalRows;
+    const totalPages = Math.max(1, Math.ceil(medicalRows.length / medicalPageSize));
+    const safePage = Math.min(Math.max(1, medicalPage), totalPages);
+    const start = (safePage - 1) * medicalPageSize;
+    return medicalRows.slice(start, start + medicalPageSize);
+  }, [medicalRows, medicalPage, medicalPageSize]);
+
   const transferRows = useMemo(
     () =>
       [...rowsWithRunningTotals]
@@ -1074,6 +1126,14 @@ export default function App() {
         .reverse(),
     [rowsWithRunningTotals]
   );
+
+  const paginatedTransferRows = useMemo(() => {
+    if (transferPageSize <= 0) return transferRows;
+    const totalPages = Math.max(1, Math.ceil(transferRows.length / transferPageSize));
+    const safePage = Math.min(Math.max(1, transferPage), totalPages);
+    const start = (safePage - 1) * transferPageSize;
+    return transferRows.slice(start, start + transferPageSize);
+  }, [transferRows, transferPage, transferPageSize]);
 
   const totalContributionsOnly = useMemo(
     () =>
@@ -1444,7 +1504,7 @@ export default function App() {
                   <span className="text-xs font-semibold text-slate-600">
                     Total Fund Remaining
                   </span>
-                  <span className="text-xs text-slate-400">All 3 Accounts →</span>
+                  <span className="text-xs text-slate-400">All 4 Accounts →</span>
                 </div>
                 <div className="mt-2 text-2xl font-bold font-mono tabular-nums text-emerald-700">
                   {formatPHP(totals.totalFund)}
@@ -1463,7 +1523,7 @@ export default function App() {
               >
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-semibold text-slate-600">
-                    Clan Contributions (2026)
+                    Clan Contributions (2024–2026)
                   </span>
                   <span className="text-xs text-slate-400">{db.members.length} members →</span>
                 </div>
@@ -1854,7 +1914,7 @@ export default function App() {
                   <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
                     <div>
                       <h2 className="text-base font-bold text-slate-900">Contributor Standings</h2>
-                      <p className="text-xs text-slate-500">Apr – Oct 2026 cumulative inflows</p>
+                      <p className="text-xs text-slate-500">Jan 2024 – Present cumulative inflows</p>
                     </div>
                     <button
                       type="button"
@@ -2630,6 +2690,11 @@ export default function App() {
                                   tx.amountOnHand === 0 &&
                                   tx.bpiMoneyMarket === 0 &&
                                   `Short Term Bal: ${formatPHP(tx.runningShortTerm)}`}
+                                {(tx.memberLoan || 0) !== 0 &&
+                                  tx.amountOnHand === 0 &&
+                                  tx.bpiMoneyMarket === 0 &&
+                                  tx.bpiShortTerm === 0 &&
+                                  `Loan Bal: ${formatPHP(tx.runningMemberLoan)}`}
                               </div>
                             </div>
 
@@ -2740,6 +2805,17 @@ export default function App() {
                 </div>
               )}
 
+              {/* Activity Ledger Pagination Bar */}
+              <PaginationBar
+                currentPage={ledgerPage}
+                totalItems={filteredRows.length}
+                pageSize={ledgerPageSize}
+                onPageChange={setLedgerPage}
+                onPageSizeChange={setLedgerPageSize}
+                pageSizeOptions={[10, 15, 25, 50]}
+                itemLabel="entries"
+              />
+
               {/* Clean Ledger Summary Footer */}
               <div className="border-t border-slate-200 bg-slate-50 px-5 py-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-slate-600">
@@ -2761,6 +2837,13 @@ export default function App() {
                     BPI Short Term:{' '}
                     <strong className="font-mono tabular-nums text-slate-900">
                       {formatPHP(totals.bpiShortTerm)}
+                    </strong>
+                  </span>
+                  <span aria-hidden="true">·</span>
+                  <span>
+                    Member Loans:{' '}
+                    <strong className="font-mono tabular-nums text-amber-900">
+                      {formatPHP(totals.memberLoan)}
                     </strong>
                   </span>
                 </div>
@@ -2901,7 +2984,7 @@ export default function App() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-200 text-sm">
-                        {contributorStats.map((stat) => {
+                        {paginatedMatrixContributors.map((stat) => {
                           const yearSum = activeMonths.reduce(
                             (acc, m) => acc + (stat.monthlyByMonth[m.key] || 0),
                             0
@@ -2953,6 +3036,15 @@ export default function App() {
                   );
                 })()}
               </div>
+              <PaginationBar
+                currentPage={matrixPage}
+                totalItems={contributorStats.length}
+                pageSize={matrixPageSize}
+                onPageChange={setMatrixPage}
+                onPageSizeChange={setMatrixPageSize}
+                pageSizeOptions={[4, 8, 12]}
+                itemLabel="contributors"
+              />
             </div>
           </section>
         )}
@@ -3041,7 +3133,7 @@ export default function App() {
                 )}
               </div>
               <div className="divide-y divide-slate-200">
-                {medicalRows.map((row) => {
+                {paginatedMedicalRows.map((row) => {
                   const pres = resolveTransactionPresentation(row);
                   return (
                     <div
@@ -3129,6 +3221,15 @@ export default function App() {
                   );
                 })}
               </div>
+              <PaginationBar
+                currentPage={medicalPage}
+                totalItems={medicalRows.length}
+                pageSize={medicalPageSize}
+                onPageChange={setMedicalPage}
+                onPageSizeChange={setMedicalPageSize}
+                pageSizeOptions={[5, 10, 20, 50]}
+                itemLabel="medical records"
+              />
             </div>
 
             {/* Bank & Fund Investment Reallocations List */}
@@ -3163,7 +3264,7 @@ export default function App() {
                 )}
               </div>
               <div className="divide-y divide-slate-200">
-                {transferRows.map((row) => {
+                {paginatedTransferRows.map((row) => {
                   const pres = resolveTransactionPresentation(row);
                   return (
                     <div
@@ -3238,6 +3339,15 @@ export default function App() {
                   );
                 })}
               </div>
+              <PaginationBar
+                currentPage={transferPage}
+                totalItems={transferRows.length}
+                pageSize={transferPageSize}
+                onPageChange={setTransferPage}
+                onPageSizeChange={setTransferPageSize}
+                pageSizeOptions={[5, 10, 20, 50]}
+                itemLabel="transfers"
+              />
             </div>
           </section>
         )}
@@ -3281,9 +3391,15 @@ export default function App() {
     <div className="mx-auto flex max-w-[1280px] flex-col sm:flex-row items-center justify-between gap-2">
       {activeAccount === 'clan_efund' ? (
         <>
-          <div>
-            Clan E-Fund Ledger · {canManage ? 'Record Manager Mode' : 'View-Only Contributor Mode'}{' '}
-            (<span className="font-mono text-slate-700">{FIRESTORE_DATABASE_ID}</span>)
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span>
+              Clan E-Fund Ledger · {canManage ? 'Record Manager Mode' : 'View-Only Contributor Mode'}{' '}
+              (<span className="font-mono text-slate-700">{FIRESTORE_DATABASE_ID}</span>)
+            </span>
+            <span aria-hidden="true">·</span>
+            <span className="font-mono text-slate-600">
+              v{APP_VERSION} (Schema v{db.schemaVersion || 4})
+            </span>
           </div>
           <div className="font-mono tabular-nums">
             Total Fund: {formatPHP(totals.totalFund)}
@@ -3291,9 +3407,13 @@ export default function App() {
         </>
       ) : (
         <>
-          <div>
-            Mama&apos;s Personal Savings · {canManage ? 'Manager Mode' : 'Access Restricted'}{' '}
-            (Private separate account)
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span>
+              Mama&apos;s Personal Savings · {canManage ? 'Manager Mode' : 'Access Restricted'}{' '}
+              (Private separate account)
+            </span>
+            <span aria-hidden="true">·</span>
+            <span className="font-mono text-slate-600">v{APP_VERSION}</span>
           </div>
           {canManage && (
             <div className="font-mono tabular-nums font-bold text-purple-900">
