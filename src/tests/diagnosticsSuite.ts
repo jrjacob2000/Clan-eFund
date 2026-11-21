@@ -14,6 +14,7 @@ import {
   ADMIN_EMAIL,
   FIREBASE_PROJECT_ID,
   FIRESTORE_DATABASE_ID,
+  MAMAS_SAVINGS_CACHE_KEY,
   MAMAS_SAVINGS_DOC_ID,
   PRODUCTION_FIREBASE_CONFIG,
   SHARED_LEDGER_ID,
@@ -28,6 +29,7 @@ import {
   isLedgerAdmin,
   normalizeMamasBucketLabels,
   normalizeMamasCustomBuckets,
+  sanitizeCsvCell,
   sanitizeDocId,
   sanitizeMembersList
 } from '../services/firebaseDb';
@@ -310,25 +312,71 @@ export function runAllUnitTests(): TestCaseResult[] {
     )
   );
 
-  // 5. Mama's Personal Savings Master 18-Row Seed Reconciliation
+  // Synthetic test fixture for Mama's Savings unit tests (ensures zero real private figures exist in client bundle)
+  const SYNTHETIC_MAMAS_FIXTURE: MamasSavingsState = {
+    title: "Mama's Savings (Synthetic Test Fixture)",
+    bucketLabels: { ...DEFAULT_MAMAS_BUCKET_LABELS },
+    customBuckets: [],
+    investBalance: 10000,
+    mamaAtmBalance: 20000,
+    loanToMhariz: 15000,
+    totalSavings: 45000,
+    records: [
+      {
+        id: 'syn-1',
+        rowRef: 1,
+        date: '2026-01-15',
+        displayDate: 'Jan 15, 2026',
+        invest: 12000,
+        mamaAtm: 35000,
+        notes: 'Synthetic opening deposit'
+      },
+      {
+        id: 'syn-2',
+        rowRef: 2,
+        date: '2026-02-15',
+        displayDate: 'Feb 15, 2026',
+        invest: -2000,
+        mamaAtm: 0,
+        notes: 'Synthetic BPI Short Term withdrawal'
+      },
+      {
+        id: 'syn-3',
+        rowRef: 3,
+        date: '2026-03-15',
+        displayDate: 'Mar 15, 2026',
+        invest: 0,
+        mamaAtm: -15000,
+        notes: 'Hiram ni Mhariz'
+      }
+    ]
+  };
+
+  // 5. Mama's Personal Savings Static Bundle Zero-Leak & Synthetic Calculation Test
   results.push(
     runSyncTest(
       'UT-05',
       'Unit Test',
       "Mama's Personal Savings",
-      "Master 18-row MAMAS_SAVINGS_DATA reconciles to BPI Short Term ₱8,200, Mama ATM ₱15,000, Loan ₱40,000, Total ₱63,200",
+      'MAMAS_SAVINGS_DATA in public client bundle has 0 leaked records (₱0.00) while calculateMamasTotals accurately reconciles deposits, withdrawals, and loans',
       () => {
-        const calc = calculateMamasTotals(MAMAS_SAVINGS_DATA);
+        const bundleCheck =
+          MAMAS_SAVINGS_DATA.records.length === 0 &&
+          MAMAS_SAVINGS_DATA.investBalance === 0 &&
+          MAMAS_SAVINGS_DATA.mamaAtmBalance === 0 &&
+          MAMAS_SAVINGS_DATA.loanToMhariz === 0 &&
+          MAMAS_SAVINGS_DATA.totalSavings === 0;
+        const calc = calculateMamasTotals(SYNTHETIC_MAMAS_FIXTURE);
         const passed =
-          MAMAS_SAVINGS_DATA.records.length === 18 &&
-          calc.investBalance === 8200 &&
-          calc.mamaAtmBalance === 15000 &&
-          calc.loanToMhariz === 40000 &&
-          calc.totalSavings === 63200;
+          bundleCheck &&
+          calc.investBalance === 10000 &&
+          calc.mamaAtmBalance === 20000 &&
+          calc.loanToMhariz === 15000 &&
+          calc.totalSavings === 45000;
         return {
           passed,
-          expected: '18 rows | BPI ST: ₱8,200 | ATM: ₱15,000 | Loan: ₱40,000 | Total: ₱63,200',
-          actual: `${MAMAS_SAVINGS_DATA.records.length} rows | BPI ST: ${formatPHP(calc.investBalance)} | ATM: ${formatPHP(calc.mamaAtmBalance)} | Loan: ${formatPHP(calc.loanToMhariz)} | Total: ${formatPHP(calc.totalSavings)}`
+          expected: 'Bundle: 0 records (₱0.00) | Synthetic Fixture: BPI ST ₱10,000 | ATM ₱20,000 | Loan ₱15,000 | Total ₱45,000',
+          actual: `Bundle: ${MAMAS_SAVINGS_DATA.records.length} records (${formatPHP(MAMAS_SAVINGS_DATA.totalSavings)}) | Fixture: BPI ST ${formatPHP(calc.investBalance)} | ATM ${formatPHP(calc.mamaAtmBalance)} | Loan ${formatPHP(calc.loanToMhariz)} | Total ${formatPHP(calc.totalSavings)}`
         };
       }
     )
@@ -348,52 +396,52 @@ export function runAllUnitTests(): TestCaseResult[] {
           loanLabel: 'Family Receivable'
         };
         const stateWithRepayment: MamasSavingsState = {
-          ...MAMAS_SAVINGS_DATA,
+          ...SYNTHETIC_MAMAS_FIXTURE,
           bucketLabels: customLabels,
           records: [
-            ...MAMAS_SAVINGS_DATA.records,
+            ...SYNTHETIC_MAMAS_FIXTURE.records,
             {
               id: 'repay-test',
-              rowRef: 19,
+              rowRef: 4,
               date: '2026-11-15',
               displayDate: 'Nov 15, 2026',
               invest: 0,
-              mamaAtm: 10000,
+              mamaAtm: 5000,
               notes: 'Partial repayment for Family Receivable'
             }
           ]
         };
         const afterAdd = calculateMamasTotals(stateWithRepayment);
 
-        // Now simulate editing repayment from 10,000 to 15,000
+        // Now simulate editing repayment from 5,000 to 9,000
         const afterEdit = calculateMamasTotals({
           ...stateWithRepayment,
           records: stateWithRepayment.records.map((r) =>
-            r.id === 'repay-test' ? { ...r, mamaAtm: 15000 } : r
+            r.id === 'repay-test' ? { ...r, mamaAtm: 9000 } : r
           )
         });
 
         // Now simulate deleting the repayment record
         const afterDelete = calculateMamasTotals({
           ...stateWithRepayment,
-          records: MAMAS_SAVINGS_DATA.records
+          records: SYNTHETIC_MAMAS_FIXTURE.records
         });
 
         const passed =
-          afterAdd.loanToMhariz === 30000 &&
+          afterAdd.loanToMhariz === 10000 &&
           afterAdd.mamaAtmBalance === 25000 &&
-          afterAdd.totalSavings === 63200 &&
-          afterEdit.loanToMhariz === 25000 &&
-          afterEdit.mamaAtmBalance === 30000 &&
-          afterEdit.totalSavings === 63200 &&
-          afterDelete.loanToMhariz === 40000 &&
-          afterDelete.mamaAtmBalance === 15000 &&
-          afterDelete.totalSavings === 63200;
+          afterAdd.totalSavings === 45000 &&
+          afterEdit.loanToMhariz === 6000 &&
+          afterEdit.mamaAtmBalance === 29000 &&
+          afterEdit.totalSavings === 45000 &&
+          afterDelete.loanToMhariz === 15000 &&
+          afterDelete.mamaAtmBalance === 20000 &&
+          afterDelete.totalSavings === 45000;
 
         return {
           passed,
-          expected: 'After +10k repay: Loan ₱30k | After edit +15k: Loan ₱25k | After delete: Loan ₱40k (Total always ₱63,200)',
-          actual: `After +10k: Loan ${formatPHP(afterAdd.loanToMhariz)} | After edit +15k: Loan ${formatPHP(afterEdit.loanToMhariz)} | After delete: Loan ${formatPHP(afterDelete.loanToMhariz)} (Total ${formatPHP(afterDelete.totalSavings)})`
+          expected: 'After +5k repay: Loan ₱10k | After edit +9k: Loan ₱6k | After delete: Loan ₱15k (Total always ₱45,000)',
+          actual: `After +5k: Loan ${formatPHP(afterAdd.loanToMhariz)} | After edit +9k: Loan ${formatPHP(afterEdit.loanToMhariz)} | After delete: Loan ${formatPHP(afterDelete.loanToMhariz)} (Total ${formatPHP(afterDelete.totalSavings)})`
         };
       }
     )
@@ -414,13 +462,13 @@ export function runAllUnitTests(): TestCaseResult[] {
         ];
         const normalized = normalizeMamasCustomBuckets(rawBuckets);
         const stateWithCustom: MamasSavingsState = {
-          ...MAMAS_SAVINGS_DATA,
+          ...SYNTHETIC_MAMAS_FIXTURE,
           customBuckets: normalized,
           records: [
-            ...MAMAS_SAVINGS_DATA.records,
+            ...SYNTHETIC_MAMAS_FIXTURE.records,
             {
               id: 'cust-1',
-              rowRef: 19,
+              rowRef: 4,
               date: '2026-11-18',
               displayDate: 'Nov 18, 2026',
               invest: 0,
@@ -436,10 +484,10 @@ export function runAllUnitTests(): TestCaseResult[] {
           normalized.length === 2 &&
           normalized[0].id === 'mp2_fund_' &&
           normalized[1].category === 'investment' &&
-          calc.totalSavings === 75200;
+          calc.totalSavings === 57000;
         return {
           passed,
-          expected: '2 normalized buckets | Custom +₱12,000 -> Total Savings ₱75,200.00',
+          expected: '2 normalized buckets | Custom +₱12,000 -> Total Savings ₱57,000.00',
           actual: `${normalized.length} normalized buckets | Total Savings ${formatPHP(calc.totalSavings)}`
         };
       }
@@ -623,32 +671,32 @@ export function runAllUnitTests(): TestCaseResult[] {
       'UT-12',
       'Unit Test',
       'Google Drive & Sheets Backup',
-      'buildSpreadsheetValueRanges builds 2-tab value matrices ("E-Fund" 107 rows + "Mamas savings" 18 rows) with dynamic bucket headers and summary totals',
+      'buildSpreadsheetValueRanges builds 2-tab value matrices ("E-Fund" + "Mamas savings") with dynamic bucket headers and summary totals',
       () => {
         const { efundValues, mamasValues } = buildSpreadsheetValueRanges(
           INITIAL_EFUND_DB,
-          MAMAS_SAVINGS_DATA
+          SYNTHETIC_MAMAS_FIXTURE
         );
         // efundValues = 1 header + 107 data rows + 1 blank row + 1 summary row = 110 rows
-        // mamasValues = 1 header + 18 data rows + 1 blank row + 1 summary row = 21 rows
+        // mamasValues = 1 header + 3 synthetic data rows + 1 blank row + 1 summary row = 6 rows
         const efundSummary = efundValues[efundValues.length - 1];
         const mamasSummary = mamasValues[mamasValues.length - 1];
         const mamasHeader = mamasValues[0];
         const passed =
           efundValues.length === 110 &&
-          mamasValues.length === 21 &&
+          mamasValues.length === 6 &&
           efundSummary[3] === 'ACCOUNT TOTALS' &&
           efundSummary[6] === 11970 &&
           efundSummary[7] === 78000 &&
           efundSummary[8] === 6800 &&
           mamasHeader[3] === 'BPI Short Term (PHP)' &&
-          mamasSummary[3] === 8200 &&
-          mamasSummary[4] === 15000 &&
-          mamasSummary[6] === 40000;
+          mamasSummary[3] === 10000 &&
+          mamasSummary[4] === 20000 &&
+          mamasSummary[6] === 15000;
 
         return {
           passed,
-          expected: 'E-Fund: 110 rows (Total ₱96,770) | Mamas: 21 rows ("BPI Short Term (PHP)", Total ₱63,200)',
+          expected: 'E-Fund: 110 rows (Total ₱96,770) | Mamas Fixture: 6 rows ("BPI Short Term (PHP)", Total ₱45,000)',
           actual: `E-Fund: ${efundValues.length} rows | Mamas: ${mamasValues.length} rows (Col D: "${mamasHeader[3]}")`
         };
       }
@@ -853,13 +901,18 @@ export async function runAllProbeTests(
       async () => {
         const currentUser = auth.currentUser;
         const isAdmin = isLedgerAdmin(currentUser);
-        const cachedMamas = localStorage.getItem('mamas_personal_savings_v2_cache');
+        const cachedMamas =
+          localStorage.getItem(MAMAS_SAVINGS_CACHE_KEY) ||
+          localStorage.getItem('mamas_personal_savings_v2_cache');
+        const leakedMamasKey = Object.keys(localStorage).find((k) =>
+          /^mamas_(personal_)?savings/i.test(k)
+        );
 
         if (isAdmin) {
           const calc = calculateMamasTotals(liveMamasState);
           const passed =
             calc.totalSavings === liveMamasState.totalSavings &&
-            liveMamasState.records.length >= 1;
+            Array.isArray(liveMamasState.records);
           return {
             passed,
             expected: 'Admin session holds reconciled Mama\'s Savings state',
@@ -868,12 +921,13 @@ export async function runAllProbeTests(
         } else {
           const passed =
             cachedMamas === null &&
+            !leakedMamasKey &&
             liveMamasState.records.length === 0 &&
             liveMamasState.totalSavings === 0;
           return {
             passed,
             expected: 'Non-admin session has 0 records in memory and null localStorage cache',
-            actual: `Cache: ${cachedMamas === null ? 'null' : 'present'} | Memory records: ${liveMamasState.records.length}`
+            actual: `Cache: ${leakedMamasKey ? leakedMamasKey : 'null'} | Memory records: ${liveMamasState.records.length}`
           };
         }
       }

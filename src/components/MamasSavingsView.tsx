@@ -25,7 +25,8 @@ import {
 } from '../data/initialLedger';
 import {
   normalizeMamasBucketLabels,
-  normalizeMamasCustomBuckets
+  normalizeMamasCustomBuckets,
+  sanitizeCsvCell
 } from '../services/firebaseDb';
 import { PaginationBar } from './PaginationBar';
 
@@ -814,11 +815,11 @@ export const MamasSavingsView: React.FC<MamasSavingsViewProps> = ({
       `${bucketLabels.atmLabel} (PHP)`,
       ...customBuckets.map((cb) => `${cb.label} (PHP)`),
       'Running Liquid Balance (PHP)'
-    ];
+    ].map((h) => sanitizeCsvCell(h));
     const rows = recordsWithRunningBalances.map((r) => [
-      `"${r.formattedDate.primary}"`,
-      `"${r.presentation.title.replace(/"/g, '""')}"`,
-      `"${r.presentation.accountLabel}"`,
+      sanitizeCsvCell(r.formattedDate.primary),
+      sanitizeCsvCell(r.presentation.title),
+      sanitizeCsvCell(r.presentation.accountLabel),
       r.invest.toFixed(2),
       r.mamaAtm.toFixed(2),
       ...customBuckets.map((cb) =>
@@ -834,22 +835,19 @@ export const MamasSavingsView: React.FC<MamasSavingsViewProps> = ({
       state.investBalance.toFixed(2),
       state.mamaAtmBalance.toFixed(2),
       ...customBucketsWithBalances.map((cb) => cb.balance.toFixed(2)),
-      `"${bucketLabels.loanLabel}: ${state.loanToMhariz.toFixed(2)} | Total Savings: ${state.totalSavings.toFixed(2)}"`
+      sanitizeCsvCell(
+        `${bucketLabels.loanLabel}: ${state.loanToMhariz.toFixed(2)} | Total Savings: ${state.totalSavings.toFixed(2)}`
+      )
     ]);
 
-    const csvContent =
-      'data:text/csv;charset=utf-8,' +
-      [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
-    const encodedUri = encodeURI(csvContent);
+    const csvContent = [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute(
-      'download',
-      `mamas-personal-savings-${new Date().toISOString().slice(0, 10)}.csv`
-    );
-    document.body.appendChild(link);
+    link.href = url;
+    link.download = `mamas-personal-savings-${new Date().toISOString().slice(0, 10)}.csv`;
     link.click();
-    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   const investPct = state.totalSavings > 0 ? (state.investBalance / state.totalSavings) * 100 : 0;

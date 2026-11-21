@@ -543,7 +543,7 @@ export const DatabaseManagementView: React.FC<DatabaseManagementViewProps> = ({
           <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-mono font-bold text-emerald-800">
             {unitResults.filter((r) => r.passed).length +
               probeResults.filter((r) => r.passed).length}
-            /{unitResults.length + (probeResults.length || 6)}
+            /{unitResults.length + (probeResults.length || 7)}
           </span>
         </button>
       </div>
@@ -573,12 +573,12 @@ export const DatabaseManagementView: React.FC<DatabaseManagementViewProps> = ({
                 <div className="flex items-center justify-between w-full text-emerald-950 font-bold text-xs">
                   <span className="flex items-center gap-1.5">
                     <RefreshCw className="h-4 w-4 text-emerald-700 group-hover:rotate-180 transition-transform duration-500" />
-                    <span>Reset &amp; Remigrate Spreadsheet</span>
+                    <span>Reset &amp; Remigrate Clan E-Fund</span>
                   </span>
                   <ArrowRight className="h-3.5 w-3.5 text-emerald-700" />
                 </div>
                 <p className="text-[11px] text-emerald-800/90 mt-2 leading-relaxed">
-                  Overwrites Firestore with all 107 E-Fund records (₱96,770) and all 18 Mama&apos;s Savings records (₱63,200).
+                  Resets the shared Clan E-Fund ledger in Firestore to the master 107 spreadsheet records (₱96,770.00).
                 </p>
               </button>
 

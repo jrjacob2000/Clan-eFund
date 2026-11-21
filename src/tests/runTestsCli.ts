@@ -72,7 +72,7 @@ for (const ut of unitSuiteResults) {
 
 // Additional Edge-Case Unit Tests
 recordTest(
-  'UT-13',
+  'UT-14',
   'UNIT',
   'Internal Transfer between Cash on Hand, BPI Money Market, and BPI Short Term keeps Total Fund invariant',
   () => {
@@ -105,7 +105,7 @@ recordTest(
 );
 
 recordTest(
-  'UT-14',
+  'UT-15',
   'UNIT',
   'Empty Mama\'s Savings state (View-Only non-admin fallback) computes zero for all balances without leaking data',
   () => {
@@ -134,18 +134,22 @@ console.log('\n--- Running Architecture, Configuration & Security Probe Suite (P
 recordTest(
   'PT-01',
   'PROBE',
-  'Verify firebase-applet-config.json (Dev) and PRODUCTION_FIREBASE_CONFIG (Prod) are properly configured',
+  'Verify firebase-applet-config.json and PRODUCTION_FIREBASE_CONFIG are properly configured for clan-e-fund-ledger',
   () => {
     const devConfigRaw = readFileSync(resolve(process.cwd(), 'firebase-applet-config.json'), 'utf-8');
     const devConfig = JSON.parse(devConfigRaw);
-    assert.equal(devConfig.projectId, 'gen-lang-client-0866727915');
+    assert.equal(devConfig.projectId, 'clan-e-fund-ledger');
+    assert.equal(
+      devConfig.firestoreDatabaseId,
+      'ai-studio-clanefundledger-9007d667-4fc7-4cb4-b6d8-b403e74ca30a'
+    );
     assert.ok(devConfig.apiKey && devConfig.apiKey.length > 10);
     assert.equal(PRODUCTION_FIREBASE_CONFIG.projectId, 'clan-e-fund-ledger');
     assert.equal(
       PRODUCTION_FIREBASE_CONFIG.firestoreDatabaseId,
       'ai-studio-clanefundledger-9007d667-4fc7-4cb4-b6d8-b403e74ca30a'
     );
-    return `Dev=${devConfig.projectId} | Prod=${PRODUCTION_FIREBASE_CONFIG.projectId}`;
+    return `ActiveConfig=${devConfig.projectId} | Prod=${PRODUCTION_FIREBASE_CONFIG.projectId} | DB=${devConfig.firestoreDatabaseId}`;
   }
 );
 
@@ -215,21 +219,35 @@ recordTest(
 recordTest(
   'PT-04',
   'PROBE',
-  'Probe all 18 Mama\'s Personal Savings seed records for valid ISO dates, non-serial displayDates, and BPI Short Term naming',
+  'Probe public client bundle (initialLedger.ts, App.tsx, DatabaseManagementView.tsx) for zero hardcoded private Mama\'s Savings balances or records',
   () => {
-    for (const rec of MAMAS_SAVINGS_DATA.records) {
-      assert.match(rec.date, /^\d{4}-\d{2}-\d{2}$/, `Invalid date: ${rec.date}`);
-      assert.doesNotMatch(
-        rec.displayDate,
-        /^\d{5}$/,
-        `Found raw Excel serial date in displayDate: ${rec.displayDate}`
-      );
-      assert.ok(
-        !/Invest Fund/i.test(rec.notes || ''),
-        `Found unmigrated "Invest Fund" note: ${rec.notes}`
-      );
-    }
-    return `18 Mama's Savings records verified with human-readable dates and "${MAMAS_SAVINGS_DATA.bucketLabels?.investLabel}" labels`;
+    const initialLedgerSource = readFileSync(
+      resolve(process.cwd(), 'src/data/initialLedger.ts'),
+      'utf-8'
+    );
+    const appSource = readFileSync(resolve(process.cwd(), 'src/App.tsx'), 'utf-8');
+    const dbViewSource = readFileSync(
+      resolve(process.cwd(), 'src/components/DatabaseManagementView.tsx'),
+      'utf-8'
+    );
+
+    assert.equal(
+      MAMAS_SAVINGS_DATA.records.length,
+      0,
+      'MAMAS_SAVINGS_DATA.records in public client bundle must be empty (0 records)'
+    );
+    assert.equal(
+      MAMAS_SAVINGS_DATA.totalSavings,
+      0,
+      'MAMAS_SAVINGS_DATA.totalSavings in public client bundle must be 0'
+    );
+    assert.ok(
+      !initialLedgerSource.includes('63200') &&
+        !appSource.includes('63,200') &&
+        !dbViewSource.includes('63,200'),
+      'Static client bundle must not contain hardcoded private Mama\'s Savings total figures'
+    );
+    return `0 private records in client bundle (Total=${formatPHP(MAMAS_SAVINGS_DATA.totalSavings)}, Label="${MAMAS_SAVINGS_DATA.bucketLabels?.investLabel}")`;
   }
 );
 
@@ -258,7 +276,7 @@ recordTest(
 recordTest(
   'PT-06',
   'PROBE',
-  'Probe Google Drive & Sheets Backup integration for least-privilege scopes, in-memory token caching, and explicit overwrite confirmation modal',
+  'Probe Google Drive & Sheets Backup integration for least-privilege scopes, admin-only in-memory token caching, and explicit overwrite confirmation modal',
   () => {
     const firebaseDbSource = readFileSync(
       resolve(process.cwd(), 'src/services/firebaseDb.ts'),
@@ -274,15 +292,95 @@ recordTest(
       'firebaseDb.ts must declare drive.file and spreadsheets OAuth scopes'
     );
     assert.ok(
-      !firebaseDbSource.includes('localStorage.setItem(\'accessToken\'') &&
-        !firebaseDbSource.includes('sessionStorage.setItem(\'accessToken\''),
+      firebaseDbSource.includes('isLedgerAdmin(result.user)') &&
+        firebaseDbSource.includes('cachedAccessToken = null'),
+      'firebaseDb.ts must verify isLedgerAdmin(result.user) before caching OAuth access tokens and clear token for non-admins'
+    );
+    assert.ok(
+      !firebaseDbSource.includes("localStorage.setItem('accessToken'") &&
+        !firebaseDbSource.includes("sessionStorage.setItem('accessToken'"),
       'OAuth access token must only be cached in memory, never in Web Storage'
     );
     assert.ok(
       dbViewSource.includes('Overwrite Existing Google Sheet Backup?'),
       'DatabaseManagementView.tsx must require explicit confirmation modal before overwriting an existing Google Sheet'
     );
-    return 'Verified drive.file + spreadsheets scopes, in-memory token cache, and explicit overwrite confirmation modal';
+    return 'Verified drive.file + spreadsheets scopes, isLedgerAdmin OAuth token guard, in-memory token cache, and overwrite modal';
+  }
+);
+
+recordTest(
+  'PT-07',
+  'PROBE',
+  'Probe Production Firestore Write & OAuth Sign-In Regression Guards (setDoc merge, existingId separation, batch-safe rules)',
+  () => {
+    const firebaseDbSource = readFileSync(
+      resolve(process.cwd(), 'src/services/firebaseDb.ts'),
+      'utf-8'
+    );
+    const appSource = readFileSync(resolve(process.cwd(), 'src/App.tsx'), 'utf-8');
+    const rulesSource = readFileSync(resolve(process.cwd(), 'firestore.rules'), 'utf-8');
+
+    // 1. handleSaveEntry must NOT pass `existingId || assignedId` as existingId
+    assert.ok(
+      !appSource.includes('existingId || assignedId'),
+      'App.tsx handleSaveEntry must pass existingId and assignedId separately so new transactions use setDoc(create)'
+    );
+
+    // 2. firebaseDb.ts must use setDoc(..., { merge: true }) and never call updateDoc on potentially non-existent docs
+    assert.ok(
+      !firebaseDbSource.includes('updateDoc('),
+      'firebaseDb.ts must use setDoc with { merge: true } instead of updateDoc'
+    );
+
+    // 3.firestore.rules must authorize UID 8F7onSdbNwQcD3Jz2QSFXr8FKkr1 and contain 0 per-doc exists() calls
+    assert.ok(
+      rulesSource.includes("request.auth.uid == '8F7onSdbNwQcD3Jz2QSFXr8FKkr1'"),
+      'firestore.rules must authorize verified production Admin UID 8F7onSdbNwQcD3Jz2QSFXr8FKkr1'
+    );
+    assert.ok(
+      !rulesSource.includes('exists(/databases/'),
+      'firestore.rules must contain 0 per-document exists() calls so 107-row batch writes never exceed Firestore limits'
+    );
+
+    return 'Verified existingId separation, setDoc({ merge: true }), production UID + email rule lock, and 0 exists() calls';
+  }
+);
+
+recordTest(
+  'PT-08',
+  'PROBE',
+  'Probe Spreadsheet Formula Injection Defense, CSV "#" Blob Safety, and Named Database ID Guard',
+  () => {
+    const driveSource = readFileSync(
+      resolve(process.cwd(), 'src/services/googleDriveBackup.ts'),
+      'utf-8'
+    );
+    const mamasViewSource = readFileSync(
+      resolve(process.cwd(), 'src/components/MamasSavingsView.tsx'),
+      'utf-8'
+    );
+    const envExampleSource = readFileSync(resolve(process.cwd(), '.env.example'), 'utf-8');
+
+    // 1. Google Sheets API must use valueInputOption: 'RAW' (never 'USER_ENTERED')
+    assert.ok(
+      !driveSource.includes("valueInputOption: 'USER_ENTERED'"),
+      'googleDriveBackup.ts must use valueInputOption: RAW to block formula injection'
+    );
+
+    // 2. MamasSavingsView CSV export must use Blob instead of data:text/csv + encodeURI
+    assert.ok(
+      !mamasViewSource.includes('data:text/csv;charset=utf-8,'),
+      'MamasSavingsView.tsx must use Blob URL for CSV download so "#" in notes never truncates files'
+    );
+
+    // 3. .env.example must not suggest VITE_FIREBASE_DATABASE_ID="(default)"
+    assert.ok(
+      !envExampleSource.includes('VITE_FIREBASE_DATABASE_ID="(default)"'),
+      '.env.example must point to ai-studio-clanefundledger-9007d667-4fc7-4cb4-b6d8-b403e74ca30a'
+    );
+
+    return 'Verified valueInputOption: RAW, CSV Blob download, formula neutralization, and named database ID routing';
   }
 );
 

@@ -223,7 +223,7 @@ export async function createGoogleSheetsBackupInDrive(
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        valueInputOption: 'USER_ENTERED',
+        valueInputOption: 'RAW',
         data: [
           {
             range: `'E-Fund'!A1`,
@@ -282,6 +282,7 @@ export async function overwriteExistingGoogleSheetBackup(
   const firstTabTitle = existingTitles.includes('E-Fund')
     ? 'E-Fund'
     : existingTitles[0] || 'Sheet1';
+  const escapedFirstTabTitle = firstTabTitle.replace(/'/g, "''");
   const hasMamasTab = existingTitles.includes('Mamas savings');
 
   // If 'Mamas savings' tab does not exist yet on this spreadsheet, add it
@@ -320,7 +321,7 @@ export async function overwriteExistingGoogleSheetBackup(
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        ranges: [`'${firstTabTitle}'!A1:Z1000`, `'Mamas savings'!A1:Z1000`]
+        ranges: [`'${escapedFirstTabTitle}'!A1:Z1000`, `'Mamas savings'!A1:Z1000`]
       })
     }
   );
@@ -337,10 +338,10 @@ export async function overwriteExistingGoogleSheetBackup(
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        valueInputOption: 'USER_ENTERED',
+        valueInputOption: 'RAW',
         data: [
           {
-            range: `'${firstTabTitle}'!A1`,
+            range: `'${escapedFirstTabTitle}'!A1`,
             values: efundValues
           },
           {

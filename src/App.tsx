@@ -43,14 +43,20 @@ import {
   ADMIN_EMAIL,
   EXPORT_JSON_FILENAME,
   FIRESTORE_DATABASE_ID,
+  MAMAS_SAVINGS_CACHE_KEY,
   SHARED_LEDGER_ID,
+  clampNumber,
   deleteTransactionFromFirestore,
   ensureSharedLedgerInitializedInFirestore,
   googleSignIn,
   initAuth,
   isLedgerAdmin,
   logout,
+  purgeMamasSavingsLocalCache,
   replaceEntireLedgerInFirestore,
+  sanitizeCsvCell,
+  sanitizeDocId,
+  sanitizeMembersList,
   saveMamasSavingsToFirestore,
   saveTransactionToFirestore,
   subscribeToMamasSavings,
@@ -80,7 +86,6 @@ type FilterTab =
 type AccountFilter = 'ALL' | 'amountOnHand' | 'bpiMoneyMarket' | 'bpiShortTerm' | 'memberLoan';
 
 const LOCAL_STORAGE_CACHE_KEY = 'clan_efund_working_copy_v6';
-const MAMAS_SAVINGS_CACHE_KEY = 'mamas_savings_working_copy_v7';
 
 export const LEDGER_MONTH_OPTIONS = [
   { value: 'ALL', label: 'All Months', short: 'All' },
@@ -376,11 +381,7 @@ export default function App() {
   // Persist Mama's savings cache ONLY when authenticated as jrjacob2000@gmail.com
   useEffect(() => {
     if (!canManage) {
-      try {
-        localStorage.removeItem(MAMAS_SAVINGS_CACHE_KEY);
-      } catch {
-        // Ignore storage quota errors
-      }
+      purgeMamasSavingsLocalCache();
       return;
     }
     try {
@@ -608,17 +609,15 @@ export default function App() {
       return;
     }
 
-    // Mode: overwrite_firestore_with_default (Admin-only)
+    // Mode: overwrite_firestore_with_default (Admin-only: Resets Clan E-Fund shared ledger)
     setDb(INITIAL_EFUND_DB);
-    setMamasState(calculateMamasTotals(MAMAS_SAVINGS_DATA));
     setIsSyncingFirestore(true);
     try {
       await replaceEntireLedgerInFirestore(user.uid, INITIAL_EFUND_DB);
-      await saveMamasSavingsToFirestore(user.uid, calculateMamasTotals(MAMAS_SAVINGS_DATA));
       setStatusBanner({
         type: 'success',
         message:
-          "Migrated all 107 E-Fund rows (₱96,770.00) and all 18 Mama's Savings rows (₱63,200.00) from the Excel spreadsheet into Firebase Firestore."
+          'Reset and migrated all 107 Clan E-Fund rows (₱96,770.00) from the master spreadsheet into Firebase Firestore.'
       });
     } catch (err: any) {
       setStatusBanner({
@@ -698,8 +697,9 @@ export default function App() {
           ...entryData,
           rowRef: existingId ? entryData.rowRef : nextRowRef
         },
-        existingId || assignedId,
-        nextRowRef
+        existingId,
+        nextRowRef,
+        assignedId
       );
 
       setStatusBanner({

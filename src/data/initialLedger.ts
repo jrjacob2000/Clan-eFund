@@ -100,169 +100,24 @@ export interface ClanEFundDatabase {
   transactions: EFundTransaction[];
 }
 
-export const MAMAS_SAVINGS_DATA: MamasSavingsState = {
-  title: "Mama's Savings",
-  investBalance: 8200.0,
-  mamaAtmBalance: 15000.0,
-  loanToMhariz: 40000.0,
-  totalSavings: 63200.0,
-  bucketLabels: DEFAULT_MAMAS_BUCKET_LABELS,
-  records: [
-    {
-      rowRef: 3,
-      date: '2025-06-30',
-      displayDate: 'Jun 30, 2025',
-      invest: 5000.0,
-      mamaAtm: 0.0,
-      notes: 'Monthly allocation to BPI Short Term'
-    },
-    {
-      rowRef: 4,
-      date: '2025-07-29',
-      displayDate: 'Jul 29, 2025',
-      invest: 5000.0,
-      mamaAtm: 0.0,
-      notes: 'Monthly allocation to BPI Short Term'
-    },
-    {
-      rowRef: 5,
-      date: '2025-08-29',
-      displayDate: 'Aug 29, 2025',
-      invest: 5000.0,
-      mamaAtm: 0.0,
-      notes: 'Monthly allocation to BPI Short Term'
-    },
-    {
-      rowRef: 6,
-      date: '2025-09-30',
-      displayDate: 'Sep 30, 2025',
-      invest: 5000.0,
-      mamaAtm: 0.0,
-      notes: 'Monthly allocation to BPI Short Term'
-    },
-    {
-      rowRef: 7,
-      date: '2025-10-28',
-      displayDate: 'Oct 28, 2025',
-      invest: 5000.0,
-      mamaAtm: 0.0,
-      notes: 'Monthly allocation to BPI Short Term'
-    },
-    {
-      rowRef: 8,
-      date: '2025-11-27',
-      displayDate: 'Nov 27, 2025',
-      invest: 5000.0,
-      mamaAtm: 0.0,
-      notes: 'Monthly allocation to BPI Short Term'
-    },
-    {
-      rowRef: 9,
-      date: '2025-12-30',
-      displayDate: 'Dec 30, 2025',
-      invest: 5000.0,
-      mamaAtm: 0.0,
-      notes: 'Monthly allocation to BPI Short Term'
-    },
-    {
-      rowRef: 10,
-      date: '2026-01-28',
-      displayDate: 'Jan 28, 2026',
-      invest: 5000.0,
-      mamaAtm: 0.0,
-      notes: 'Monthly allocation to BPI Short Term'
-    },
-    {
-      rowRef: 11,
-      date: '2026-02-28',
-      displayDate: 'Feb 28, 2026',
-      invest: 5000.0,
-      mamaAtm: 0.0,
-      notes: 'Monthly allocation to BPI Short Term'
-    },
-    {
-      rowRef: 12,
-      date: '2026-03-28',
-      displayDate: 'Mar 28, 2026',
-      invest: 5000.0,
-      mamaAtm: 0.0,
-      notes: 'Monthly allocation to BPI Short Term'
-    },
-    {
-      rowRef: 13,
-      date: '2026-04-09',
-      displayDate: 'Apr 9, 2026',
-      invest: -16800.0,
-      mamaAtm: 0.0,
-      notes: 'BPI Short Term withdrawal / disbursement'
-    },
-    {
-      rowRef: 14,
-      date: '2026-04-27',
-      displayDate: 'Apr 27, 2026',
-      invest: 5000.0,
-      mamaAtm: 0.0,
-      notes: 'Monthly allocation to BPI Short Term'
-    },
-    {
-      rowRef: 15,
-      date: '2026-05-27',
-      displayDate: 'May 27, 2026',
-      invest: 5000.0,
-      mamaAtm: 0.0,
-      notes: 'Monthly allocation to BPI Short Term'
-    },
-    {
-      rowRef: 16,
-      date: '2026-06-30',
-      displayDate: 'Jun 30, 2026',
-      invest: 5000.0,
-      mamaAtm: 0.0,
-      notes: 'Monthly allocation to BPI Short Term'
-    },
-    {
-      rowRef: 17,
-      date: '2026-07-29',
-      displayDate: 'Jul 29, 2026',
-      invest: 0.0,
-      mamaAtm: 5000.0,
-      notes: 'Monthly deposit to Mama ATM'
-    },
-    {
-      rowRef: 18,
-      date: '2026-08-04',
-      displayDate: 'Aug 4, 2026',
-      invest: -40000.0,
-      mamaAtm: 0.0,
-      notes: 'Hiram ni Mhariz (Loan from BPI Short Term)'
-    },
-    {
-      rowRef: 19,
-      date: '2026-08-30',
-      displayDate: 'Aug 30, 2026',
-      invest: 0.0,
-      mamaAtm: 5000.0,
-      notes: 'Monthly deposit to Mama ATM'
-    },
-    {
-      rowRef: 20,
-      date: '2026-09-30',
-      displayDate: 'Sep 30, 2026',
-      invest: 0.0,
-      mamaAtm: 5000.0,
-      notes: 'Monthly deposit to Mama ATM'
-    }
-  ] as MamasSavingsEntry[]
-};
-
 export const EMPTY_MAMAS_SAVINGS_STATE: MamasSavingsState = {
   title: "Mama's Savings (Private)",
   investBalance: 0,
   mamaAtmBalance: 0,
   loanToMhariz: 0,
   totalSavings: 0,
+  bucketLabels: DEFAULT_MAMAS_BUCKET_LABELS,
+  customBuckets: [],
   records: []
 };
+
+/**
+ * Security Hardening: Private Mama's Personal Savings figures and transaction records
+ * are NEVER stored in the static client-side JavaScript bundle.
+ * Live records live exclusively in Firebase Firestore (`/mamas_savings/state`),
+ * protected by `firestore.rules` (accessible only to verified `jrjacob2000@gmail.com`).
+ */
+export const MAMAS_SAVINGS_DATA: MamasSavingsState = EMPTY_MAMAS_SAVINGS_STATE;
 
 export const APP_VERSION = '1.4.0';
 

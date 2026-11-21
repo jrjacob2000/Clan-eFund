@@ -19,7 +19,6 @@ import {
   query,
   serverTimestamp,
   setDoc,
-  updateDoc,
   where,
   writeBatch
 } from 'firebase/firestore';
@@ -49,6 +48,15 @@ const viteEnv: Record<string, any> =
     ? (import.meta as any).env
     : {};
 
+const DEFAULT_FIRESTORE_DB_ID =
+  'ai-studio-clanefundledger-9007d667-4fc7-4cb4-b6d8-b403e74ca30a';
+
+const rawViteDbId = String(viteEnv.VITE_FIREBASE_DATABASE_ID || '').trim();
+const resolvedProdDatabaseId =
+  rawViteDbId && rawViteDbId !== '(default)'
+    ? rawViteDbId
+    : DEFAULT_FIRESTORE_DB_ID;
+
 /**
  * Production Firebase configuration locked to project `clan-e-fund-ledger`
  * for GitHub Pages (`*.github.io`) and external production deployments.
@@ -65,9 +73,7 @@ export const PRODUCTION_FIREBASE_CONFIG = {
   authDomain:
     String(viteEnv.VITE_FIREBASE_AUTH_DOMAIN || '').trim() ||
     'clan-e-fund-ledger.firebaseapp.com',
-  firestoreDatabaseId:
-    String(viteEnv.VITE_FIREBASE_DATABASE_ID || '').trim() ||
-    'ai-studio-clanefundledger-9007d667-4fc7-4cb4-b6d8-b403e74ca30a',
+  firestoreDatabaseId: resolvedProdDatabaseId,
   storageBucket:
     String(viteEnv.VITE_FIREBASE_STORAGE_BUCKET || '').trim() ||
     'clan-e-fund-ledger.firebasestorage.app',
@@ -91,27 +97,26 @@ export const ACTIVE_FIREBASE_ENV_LABEL =
     ? `AI Studio Dev Firebase (${firebaseConfig.projectId})`
     : `Production Firebase (${PRODUCTION_FIREBASE_CONFIG.projectId})`;
 
-const DEFAULT_FIRESTORE_DB_ID =
-  'ai-studio-clanefundledger-9007d667-4fc7-4cb4-b6d8-b403e74ca30a';
+const rawAppletDbId = String(
+  (firebaseConfig as { firestoreDatabaseId?: string }).firestoreDatabaseId || ''
+).trim();
+const resolvedAppletDatabaseId =
+  rawAppletDbId && rawAppletDbId !== '(default)'
+    ? rawAppletDbId
+    : DEFAULT_FIRESTORE_DB_ID;
 
 const activeFirebaseConfig: typeof PRODUCTION_FIREBASE_CONFIG =
   ACTIVE_FIREBASE_ENV === 'production'
     ? PRODUCTION_FIREBASE_CONFIG
     : {
         ...firebaseConfig,
-        firestoreDatabaseId:
-          (firebaseConfig as { firestoreDatabaseId?: string }).firestoreDatabaseId ||
-          DEFAULT_FIRESTORE_DB_ID
+        firestoreDatabaseId: resolvedAppletDatabaseId
       };
 
 const app = initializeApp(activeFirebaseConfig);
 export const auth: ReturnType<typeof getAuth> =
   typeof window !== 'undefined' ? getAuth(app) : ({ currentUser: null } as any);
-export const db =
-  activeFirebaseConfig.firestoreDatabaseId &&
-  activeFirebaseConfig.firestoreDatabaseId !== '(default)'
-    ? getFirestore(app, activeFirebaseConfig.firestoreDatabaseId)
-    : getFirestore(app);
+export const db = getFirestore(app, activeFirebaseConfig.firestoreDatabaseId);
 
 export const EXPORT_JSON_FILENAME = 'clan-efund-ledger.json';
 export const FIREBASE_PROJECT_ID = activeFirebaseConfig.projectId;
@@ -119,6 +124,36 @@ export const FIRESTORE_DATABASE_ID =
   activeFirebaseConfig.firestoreDatabaseId || DEFAULT_FIRESTORE_DB_ID;
 export const SHARED_LEDGER_ID = 'clan-efund-main';
 export const ADMIN_EMAIL = 'jrjacob2000@gmail.com';
+export const MAMAS_SAVINGS_CACHE_KEY = 'mamas_savings_working_copy_v7';
+
+/**
+ * Purges all current and legacy Mama's Personal Savings keys from localStorage
+ * whenever a user is not verified as the Record Manager or signs out.
+ */
+export function purgeMamasSavingsLocalCache(): void {
+  if (typeof window === 'undefined' || typeof localStorage === 'undefined') return;
+  try {
+    localStorage.removeItem(MAMAS_SAVINGS_CACHE_KEY);
+    localStorage.removeItem('mamas_personal_savings_v2_cache');
+    for (const key of Object.keys(localStorage)) {
+      if (/^mamas_(personal_)?savings/i.test(key)) {
+        localStorage.removeItem(key);
+      }
+    }
+  } catch {
+    // Ignore Web Storage access errors
+  }
+}
+
+/**
+ * Sanitizes a text value for CSV export by escaping double quotes and neutralizing
+ * leading spreadsheet formula triggers (=, +, -, @, tab, CR).
+ */
+export function sanitizeCsvCell(raw: string | undefined | null): string {
+  const str = String(raw ?? '');
+  const safe = /^[=+\-@\t\r]/.test(str) ? `'${str}` : str;
+  return `"${safe.replace(/"/g, '""')}"`;
+}
 
 export function isLedgerAdmin(user: User | null): boolean {
   return Boolean(
@@ -164,6 +199,8 @@ export function handleFirestoreError(
 ): never {
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
+    operationType,
+    path,
     authInfo: {
       userId: auth.currentUser?.uid,
       email: auth.currentUser?.email,
@@ -177,9 +214,7 @@ export function handleFirestoreError(
           email: provider.email,
           photoUrl: provider.photoURL
         })) || []
-    },
-    operationType,
-    path
+    }
   };
   console.error('Firestore Error: ', JSON.stringify(errInfo));
   throw new Error(JSON.stringify(errInfo));
@@ -316,16 +351,15 @@ export async function getAccessToken(): Promise<string | null> {
 }
 
 export async function googleSignIn(): Promise<User | null> {
+  // Standard Firebase Google Sign-In uses only non-sensitive profile/email scopes
+  // so login is never blocked by Google Workspace OAuth verification checks.
   const provider = new GoogleAuthProvider();
-  for (const scope of WORKSPACE_SCOPES) {
-    provider.addScope(scope);
-  }
   try {
     isSigningIn = true;
     const result = await signInWithPopup(auth, provider);
-    const credential = GoogleAuthProvider.credentialFromResult(result);
-    if (credential?.accessToken) {
-      cachedAccessToken = credential.accessToken;
+    if (!isLedgerAdmin(result.user)) {
+      cachedAccessToken = null;
+      purgeMamasSavingsLocalCache();
     }
     return result.user;
   } finally {
@@ -342,6 +376,11 @@ export async function authorizeGoogleDriveAccess(): Promise<string> {
   try {
     isSigningIn = true;
     const result = await signInWithPopup(auth, provider);
+    if (!isLedgerAdmin(result.user)) {
+      cachedAccessToken = null;
+      purgeMamasSavingsLocalCache();
+      throw new Error(`Unauthorized: Google Drive backup is restricted to ${ADMIN_EMAIL}.`);
+    }
     const credential = GoogleAuthProvider.credentialFromResult(result);
     if (!credential?.accessToken) {
       throw new Error('Failed to obtain Google Drive & Sheets access token.');
@@ -356,6 +395,7 @@ export async function authorizeGoogleDriveAccess(): Promise<string> {
 export async function logout(): Promise<void> {
   await signOut(auth);
   cachedAccessToken = null;
+  purgeMamasSavingsLocalCache();
 }
 
 export function initAuth(
@@ -367,9 +407,13 @@ export function initAuth(
       if (!cachedAccessToken && !isSigningIn) {
         cachedAccessToken = null;
       }
+      if (!isLedgerAdmin(user)) {
+        purgeMamasSavingsLocalCache();
+      }
       onAuthenticated(user);
     } else {
       cachedAccessToken = null;
+      purgeMamasSavingsLocalCache();
       onUnauthenticated();
     }
   });
@@ -424,11 +468,19 @@ export async function ensureSharedLedgerInitializedInFirestore(
 
     if (needsFullExcelMigration) {
       await replaceEntireLedgerInFirestore(adminUid, INITIAL_EFUND_DB);
-      await saveMamasSavingsToFirestore(adminUid, MAMAS_SAVINGS_DATA);
+      const mamasRef = doc(db, 'mamas_savings', MAMAS_SAVINGS_DOC_ID);
+      try {
+        const mamasSnap = await getDoc(mamasRef);
+        if (!mamasSnap.exists()) {
+          await saveMamasSavingsToFirestore(adminUid, MAMAS_SAVINGS_DATA);
+        }
+      } catch {
+        // Ignore if non-fatal
+      }
       return { createdNew: true };
     }
 
-    // Ensure Mama's personal savings document is also initialized in Firestore
+    // Ensure Mama's personal savings document is also initialized in Firestore if missing
     const mamasRef = doc(db, 'mamas_savings', MAMAS_SAVINGS_DOC_ID);
     try {
       const mamasSnap = await getDoc(mamasRef);
@@ -504,9 +556,13 @@ export async function ensureSharedLedgerInitializedInFirestore(
     }
   }
 
-  // Step 3: Seed Mama's Personal Savings into `/mamas_savings/state`
+  // Step 3: Seed Mama's Personal Savings into `/mamas_savings/state` only if it does not already exist
   try {
-    await saveMamasSavingsToFirestore(adminUid, MAMAS_SAVINGS_DATA);
+    const mamasRef = doc(db, 'mamas_savings', MAMAS_SAVINGS_DOC_ID);
+    const mamasSnap = await getDoc(mamasRef);
+    if (!mamasSnap.exists()) {
+      await saveMamasSavingsToFirestore(adminUid, MAMAS_SAVINGS_DATA);
+    }
   } catch {
     // Non-fatal
   }
@@ -663,34 +719,39 @@ export async function updateLedgerConfigInFirestore(
   const ledgerRef = doc(db, 'ledgers', SHARED_LEDGER_ID);
 
   try {
-    await updateDoc(ledgerRef, {
-      clanName: (config.clanName || INITIAL_EFUND_DB.clanName).trim().slice(0, 120),
-      cashReserveTarget: clampNumber(config.cashReserveTarget ?? 15000, 0, 100000000),
-      priorIncluded: Boolean(config.priorBalanceForward.included),
-      priorLabel: (
-        config.priorBalanceForward.label || INITIAL_EFUND_DB.priorBalanceForward.label
-      )
-        .trim()
-        .slice(0, 120),
-      priorDate: (config.priorBalanceForward.date || '2026-04-26').trim().slice(0, 32),
-      priorAmountOnHand: clampNumber(
-        config.priorBalanceForward.amountOnHand,
-        -100000000,
-        100000000
-      ),
-      priorBpiMoneyMarket: clampNumber(
-        config.priorBalanceForward.bpiMoneyMarket,
-        -100000000,
-        100000000
-      ),
-      priorBpiShortTerm: clampNumber(
-        config.priorBalanceForward.bpiShortTerm,
-        -100000000,
-        100000000
-      ),
-      members: sanitizeMembersList(config.members),
-      updatedAt: serverTimestamp()
-    });
+    await setDoc(
+      ledgerRef,
+      {
+        clanName: (config.clanName || INITIAL_EFUND_DB.clanName).trim().slice(0, 120),
+        currency: 'PHP',
+        cashReserveTarget: clampNumber(config.cashReserveTarget ?? 15000, 0, 100000000),
+        priorIncluded: Boolean(config.priorBalanceForward.included),
+        priorLabel: (
+          config.priorBalanceForward.label || INITIAL_EFUND_DB.priorBalanceForward.label
+        )
+          .trim()
+          .slice(0, 120),
+        priorDate: (config.priorBalanceForward.date || '2026-04-26').trim().slice(0, 32),
+        priorAmountOnHand: clampNumber(
+          config.priorBalanceForward.amountOnHand,
+          -100000000,
+          100000000
+        ),
+        priorBpiMoneyMarket: clampNumber(
+          config.priorBalanceForward.bpiMoneyMarket,
+          -100000000,
+          100000000
+        ),
+        priorBpiShortTerm: clampNumber(
+          config.priorBalanceForward.bpiShortTerm,
+          -100000000,
+          100000000
+        ),
+        members: sanitizeMembersList(config.members),
+        updatedAt: serverTimestamp()
+      },
+      { merge: true }
+    );
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, ledgerPath);
   }
@@ -700,15 +761,24 @@ export async function saveTransactionToFirestore(
   adminUid: string,
   entryData: Omit<EFundTransaction, 'id'>,
   existingId?: string,
-  fallbackRowRef = 112
+  fallbackRowRef = 112,
+  assignedNewId?: string
 ): Promise<string> {
-  const docId = sanitizeDocId(existingId || `row-${Date.now()}`);
+  const docId = sanitizeDocId(existingId || assignedNewId || `row-${Date.now()}`);
   const txPath = `ledgers/${SHARED_LEDGER_ID}/transactions/${docId}`;
   const txRef = doc(db, 'ledgers', SHARED_LEDGER_ID, 'transactions', docId);
 
   if (existingId) {
     try {
-      await updateDoc(txRef, buildTransactionUpdatePayload(entryData, fallbackRowRef));
+      await setDoc(
+        txRef,
+        {
+          ...buildTransactionUpdatePayload(entryData, fallbackRowRef),
+          ledgerId: SHARED_LEDGER_ID,
+          ownerId: adminUid
+        },
+        { merge: true }
+      );
       return docId;
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, txPath);
@@ -756,12 +826,45 @@ export async function replaceEntireLedgerInFirestore(
     return;
   }
 
-  await updateLedgerConfigInFirestore({
-    clanName: targetDb.clanName || INITIAL_EFUND_DB.clanName,
-    cashReserveTarget: targetDb.cashReserveTarget ?? 15000,
-    priorBalanceForward: targetDb.priorBalanceForward || INITIAL_EFUND_DB.priorBalanceForward,
-    members: targetDb.members || INITIAL_EFUND_DB.members
-  });
+  const configPayload = {
+    ownerId: adminUid,
+    clanName: (targetDb.clanName || INITIAL_EFUND_DB.clanName).trim().slice(0, 120),
+    currency: 'PHP',
+    cashReserveTarget: clampNumber(targetDb.cashReserveTarget ?? 15000, 0, 100000000),
+    priorIncluded: Boolean(
+      (targetDb.priorBalanceForward || INITIAL_EFUND_DB.priorBalanceForward).included
+    ),
+    priorLabel: (
+      targetDb.priorBalanceForward?.label || INITIAL_EFUND_DB.priorBalanceForward.label
+    )
+      .trim()
+      .slice(0, 120),
+    priorDate: (targetDb.priorBalanceForward?.date || '2024-01-01').trim().slice(0, 32),
+    priorAmountOnHand: clampNumber(
+      targetDb.priorBalanceForward?.amountOnHand ?? 0,
+      -100000000,
+      100000000
+    ),
+    priorBpiMoneyMarket: clampNumber(
+      targetDb.priorBalanceForward?.bpiMoneyMarket ?? 0,
+      -100000000,
+      100000000
+    ),
+    priorBpiShortTerm: clampNumber(
+      targetDb.priorBalanceForward?.bpiShortTerm ?? 0,
+      -100000000,
+      100000000
+    ),
+    members: sanitizeMembersList(targetDb.members || INITIAL_EFUND_DB.members),
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp()
+  };
+
+  try {
+    await setDoc(ledgerRef, configPayload);
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, `ledgers/${SHARED_LEDGER_ID}`);
+  }
 
   const txQuery = query(
     collection(db, 'ledgers', SHARED_LEDGER_ID, 'transactions'),
