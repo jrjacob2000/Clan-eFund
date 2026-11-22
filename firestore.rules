@@ -32,6 +32,141 @@ service cloud.firestore {
       );
     }
 
+    function isAllowedLedger(ledgerId) {
+      return ledgerId == 'clan-efund-main';
+    }
+
+    function isInMonetaryRange(val) {
+      return val is number && val >= -100000000 && val <= 100000000;
+    }
+
+    function isValidLedgerConfig(data) {
+      return data.keys().hasOnly([
+          'ownerId',
+          'clanName',
+          'currency',
+          'cashReserveTarget',
+          'priorIncluded',
+          'priorLabel',
+          'priorDate',
+          'priorAmountOnHand',
+          'priorBpiMoneyMarket',
+          'priorBpiShortTerm',
+          'members',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.clanName is string &&
+        data.clanName.size() >= 1 &&
+        data.clanName.size() <= 120 &&
+        data.currency == 'PHP' &&
+        data.cashReserveTarget is number &&
+        data.cashReserveTarget >= 0 &&
+        data.cashReserveTarget <= 100000000 &&
+        data.priorIncluded is bool &&
+        data.priorLabel is string &&
+        data.priorLabel.size() >= 1 &&
+        data.priorLabel.size() <= 120 &&
+        data.priorDate is string &&
+        data.priorDate.size() >= 1 &&
+        data.priorDate.size() <= 32 &&
+        isInMonetaryRange(data.priorAmountOnHand) &&
+        isInMonetaryRange(data.priorBpiMoneyMarket) &&
+        isInMonetaryRange(data.priorBpiShortTerm) &&
+        data.members is list &&
+        data.members.size() >= 1 &&
+        data.members.size() <= 30 &&
+        data.members[0] is string &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidTransaction(data, ledgerId) {
+      return data.keys().hasOnly([
+          'ledgerId',
+          'ownerId',
+          'rowRef',
+          'date',
+          'displayDate',
+          'description',
+          'category',
+          'memberOrBeneficiary',
+          'amountOnHand',
+          'bpiMoneyMarket',
+          'bpiShortTerm',
+          'memberLoan',
+          'highlightAlert',
+          'notes',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.ledgerId == ledgerId &&
+        data.ownerId is string &&
+        data.ownerId.size() >= 1 &&
+        data.ownerId.size() <= 128 &&
+        data.rowRef is number &&
+        data.rowRef >= 0 &&
+        data.rowRef <= 1000000 &&
+        data.date is string &&
+        data.date.size() >= 1 &&
+        data.date.size() <= 32 &&
+        data.displayDate is string &&
+        data.displayDate.size() >= 1 &&
+        data.displayDate.size() <= 32 &&
+        data.description is string &&
+        data.description.size() >= 1 &&
+        data.description.size() <= 200 &&
+        data.category in [
+          'Contribution',
+          'Medical Disbursement',
+          'Internal Transfer',
+          'Reimbursement',
+          'Investment Yield',
+          'Opening Balance',
+          'Member Loan',
+          'Loan Repayment'
+        ] &&
+        data.memberOrBeneficiary is string &&
+        data.memberOrBeneficiary.size() >= 1 &&
+        data.memberOrBeneficiary.size() <= 100 &&
+        isInMonetaryRange(data.amountOnHand) &&
+        isInMonetaryRange(data.bpiMoneyMarket) &&
+        isInMonetaryRange(data.bpiShortTerm) &&
+        (!('memberLoan' in data) || isInMonetaryRange(data.memberLoan)) &&
+        data.highlightAlert is bool &&
+        data.notes is string &&
+        data.notes.size() <= 500 &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidMamasSavings(data) {
+      return data.keys().hasOnly([
+          'ownerId',
+          'title',
+          'investBalance',
+          'mamaAtmBalance',
+          'loanToMhariz',
+          'totalSavings',
+          'bucketLabels',
+          'customBuckets',
+          'records',
+          'updatedAt'
+        ]) &&
+        data.ownerId is string &&
+        data.ownerId.size() >= 1 &&
+        data.ownerId.size() <= 128 &&
+        data.title is string &&
+        data.title.size() >= 1 &&
+        data.title.size() <= 120 &&
+        isInMonetaryRange(data.investBalance) &&
+        isInMonetaryRange(data.mamaAtmBalance) &&
+        isInMonetaryRange(data.loanToMhariz) &&
+        isInMonetaryRange(data.totalSavings) &&
+        data.records is list &&
+        data.records.size() <= 2000 &&
+        (!('customBuckets' in data) || (data.customBuckets is list && data.customBuckets.size() <= 20)) &&
+        data.updatedAt is timestamp;
+    }
+
     // Connection & Rules Probe Path (read-only on non-existent test doc)
     match /test/{testId} {
       allow get: if isValidId(testId);
@@ -48,7 +183,7 @@ service cloud.firestore {
     match /ledgers/{ledgerId} {
       // View-Only Contributors and Admin can read the shared clan ledger ('clan-efund-main')
       allow get: if isValidId(ledgerId) &&
-        ledgerId == 'clan-efund-main' &&
+        isAllowedLedger(ledgerId) &&
         (resource == null || isAdmin() || existing().currency == 'PHP');
 
       allow list: if false;
@@ -56,36 +191,33 @@ service cloud.firestore {
       // ONLY the Admin (jrjacob2000@gmail.com) can create or update the ledger configuration
       allow create, update: if isAdmin() &&
         isValidId(ledgerId) &&
-        ledgerId == 'clan-efund-main' &&
-        incoming().clanName is string &&
-        incoming().clanName.size() >= 1 &&
-        incoming().clanName.size() <= 120;
+        isAllowedLedger(ledgerId) &&
+        isValidLedgerConfig(incoming());
 
       allow delete: if false;
 
       // Subcollection: /ledgers/{ledgerId}/transactions/{transactionId}
       match /transactions/{transactionId} {
-        // View-Only Contributors and Admin can read transactions belonging to 'clan-efund-main'
+        // View-Only Contributors and Admin can read transactions belonging to the active ledger
         allow get: if isValidId(ledgerId) &&
           isValidId(transactionId) &&
-          ledgerId == 'clan-efund-main';
+          isAllowedLedger(ledgerId);
 
-        // Compatible with both where('ledgerId','==','clan-efund-main') and direct subcollection queries on 'clan-efund-main'
-        allow list: if ledgerId == 'clan-efund-main';
+        // Enforce server-side ledgerId query filter (all client queries filter where('ledgerId', '==', ledgerId))
+        allow list: if isAllowedLedger(ledgerId) &&
+          resource.data.ledgerId == ledgerId;
 
         // ONLY the Admin (jrjacob2000@gmail.com) can create, update, or delete transactions
         allow create, update: if isAdmin() &&
           isValidId(ledgerId) &&
           isValidId(transactionId) &&
-          ledgerId == 'clan-efund-main' &&
-          incoming().date is string &&
-          incoming().date.size() >= 1 &&
-          incoming().date.size() <= 32;
+          isAllowedLedger(ledgerId) &&
+          isValidTransaction(incoming(), ledgerId);
 
         allow delete: if isAdmin() &&
           isValidId(ledgerId) &&
           isValidId(transactionId) &&
-          ledgerId == 'clan-efund-main';
+          isAllowedLedger(ledgerId);
       }
     }
 
@@ -93,7 +225,10 @@ service cloud.firestore {
     match /mamas_savings/{docId} {
       allow get: if isAdmin() && isValidId(docId);
       allow list: if false;
-      allow create, update: if isAdmin() && isValidId(docId);
+      allow create, update: if isAdmin() &&
+        isValidId(docId) &&
+        docId == 'state' &&
+        isValidMamasSavings(incoming());
       allow delete: if false;
     }
   }

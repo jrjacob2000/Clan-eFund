@@ -119,7 +119,7 @@ export const EMPTY_MAMAS_SAVINGS_STATE: MamasSavingsState = {
  */
 export const MAMAS_SAVINGS_DATA: MamasSavingsState = EMPTY_MAMAS_SAVINGS_STATE;
 
-export const APP_VERSION = '1.4.0';
+export const APP_VERSION = '1.5.0';
 
 export const INITIAL_EFUND_DB: ClanEFundDatabase = {
   schemaVersion: 4,

@@ -17,6 +17,50 @@ export interface DriveBackupFileItem {
   webViewLink?: string;
 }
 
+const TRUSTED_GOOGLE_HOSTS = new Set(['drive.google.com', 'docs.google.com']);
+
+/**
+ * Validates that an external link returned by Google APIs uses `https:` and points
+ * to a trusted Google Drive / Google Docs hostname before rendering in `<a href>`.
+ */
+export function safeGoogleDriveUrl(
+  rawUrl: string | undefined,
+  fallbackUrl: string = 'https://drive.google.com'
+): string {
+  if (rawUrl) {
+    try {
+      const parsed = new URL(rawUrl);
+      if (parsed.protocol === 'https:' && TRUSTED_GOOGLE_HOSTS.has(parsed.hostname)) {
+        return parsed.toString();
+      }
+    } catch {
+      // Fall through to safe fallback
+    }
+  }
+  return fallbackUrl;
+}
+
+/**
+ * Formats Google Drive / Google Sheets API HTTP errors clearly without cutting off
+ * activation links when an API is disabled in the Google Cloud project.
+ */
+export function formatGoogleApiError(
+  actionLabel: string,
+  status: number,
+  rawBody: string
+): string {
+  try {
+    const parsed = JSON.parse(rawBody);
+    const message: string | undefined = parsed?.error?.message;
+    if (message) {
+      return `${actionLabel} (${status}): ${message}`;
+    }
+  } catch {
+    // Fallback to raw text if not JSON
+  }
+  return `${actionLabel} (${status}): ${rawBody.slice(0, 600)}`;
+}
+
 /**
  * Lists previous Clan E-Fund & Mama's Savings backups created by this app in the user's Google Drive.
  * Uses the `drive.file` scope (returns only files created/opened by this app).
@@ -42,9 +86,7 @@ export async function listGoogleDriveBackups(
 
   if (!res.ok) {
     const errBody = await res.text();
-    throw new Error(
-      `Google Drive API error (${res.status}): ${errBody.slice(0, 200)}`
-    );
+    throw new Error(formatGoogleApiError('Google Drive API error', res.status, errBody));
   }
 
   const data = await res.json();
@@ -200,22 +242,22 @@ export async function createGoogleSheetsBackupInDrive(
 
   if (!createRes.ok) {
     const errText = await createRes.text();
-    throw new Error(
-      `Failed to create Google Sheet (${createRes.status}): ${errText.slice(0, 200)}`
-    );
+    throw new Error(formatGoogleApiError('Failed to create Google Sheet', createRes.status, errText));
   }
 
   const created = await createRes.json();
   const spreadsheetId: string = created.spreadsheetId;
-  const spreadsheetUrl: string =
-    created.spreadsheetUrl ||
-    `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`;
+  const encodedSheetId = encodeURIComponent(spreadsheetId);
+  const spreadsheetUrl: string = safeGoogleDriveUrl(
+    created.spreadsheetUrl,
+    `https://docs.google.com/spreadsheets/d/${encodedSheetId}/edit`
+  );
 
   // 2. Populate values into both sheets via values:batchUpdate
   const { efundValues, mamasValues } = buildSpreadsheetValueRanges(db, mamasState);
 
   const updateRes = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchUpdate`,
+    `https://sheets.googleapis.com/v4/spreadsheets/${encodedSheetId}/values:batchUpdate`,
     {
       method: 'POST',
       headers: {
@@ -241,7 +283,7 @@ export async function createGoogleSheetsBackupInDrive(
   if (!updateRes.ok) {
     const errText = await updateRes.text();
     throw new Error(
-      `Created sheet but failed to populate rows (${updateRes.status}): ${errText.slice(0, 200)}`
+      formatGoogleApiError('Created sheet but failed to populate rows', updateRes.status, errText)
     );
   }
 
@@ -259,9 +301,11 @@ export async function overwriteExistingGoogleSheetBackup(
   db: ClanEFundDatabase,
   mamasState: MamasSavingsState
 ): Promise<{ spreadsheetId: string; spreadsheetUrl: string }> {
+  const encodedSheetId = encodeURIComponent(spreadsheetId);
+
   // 1. Fetch spreadsheet metadata first to verify existing sheet tab names
   const metaRes = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}`,
+    `https://sheets.googleapis.com/v4/spreadsheets/${encodedSheetId}`,
     {
       headers: { Authorization: `Bearer ${accessToken}` }
     }
@@ -270,7 +314,7 @@ export async function overwriteExistingGoogleSheetBackup(
   if (!metaRes.ok) {
     const errText = await metaRes.text();
     throw new Error(
-      `Failed to inspect target Google Sheet (${metaRes.status}): ${errText.slice(0, 200)}`
+      formatGoogleApiError('Failed to inspect target Google Sheet', metaRes.status, errText)
     );
   }
 
@@ -287,8 +331,8 @@ export async function overwriteExistingGoogleSheetBackup(
 
   // If 'Mamas savings' tab does not exist yet on this spreadsheet, add it
   if (!hasMamasTab) {
-    await fetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`,
+    const addTabRes = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${encodedSheetId}:batchUpdate`,
       {
         method: 'POST',
         headers: {
@@ -309,11 +353,17 @@ export async function overwriteExistingGoogleSheetBackup(
         })
       }
     );
+    if (!addTabRes.ok) {
+      const errText = await addTabRes.text();
+      throw new Error(
+        formatGoogleApiError('Failed to add Mamas savings tab', addTabRes.status, errText)
+      );
+    }
   }
 
-  // Clear existing ranges first so old trailing rows don't remain
-  await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchClear`,
+  // Clear entire A:Z ranges first so old trailing rows don't remain even beyond 1,000 rows
+  const clearRes = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${encodedSheetId}/values:batchClear`,
     {
       method: 'POST',
       headers: {
@@ -321,16 +371,22 @@ export async function overwriteExistingGoogleSheetBackup(
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        ranges: [`'${escapedFirstTabTitle}'!A1:Z1000`, `'Mamas savings'!A1:Z1000`]
+        ranges: [`'${escapedFirstTabTitle}'!A:Z`, `'Mamas savings'!A:Z`]
       })
     }
   );
+  if (!clearRes.ok) {
+    const errText = await clearRes.text();
+    throw new Error(
+      formatGoogleApiError('Failed to clear existing Google Sheet ranges', clearRes.status, errText)
+    );
+  }
 
   // Write fresh values
   const { efundValues, mamasValues } = buildSpreadsheetValueRanges(db, mamasState);
 
   const updateRes = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchUpdate`,
+    `https://sheets.googleapis.com/v4/spreadsheets/${encodedSheetId}/values:batchUpdate`,
     {
       method: 'POST',
       headers: {
@@ -356,15 +412,16 @@ export async function overwriteExistingGoogleSheetBackup(
   if (!updateRes.ok) {
     const errText = await updateRes.text();
     throw new Error(
-      `Failed to update Google Sheet backup (${updateRes.status}): ${errText.slice(0, 200)}`
+      formatGoogleApiError('Failed to update Google Sheet backup', updateRes.status, errText)
     );
   }
 
   return {
     spreadsheetId,
-    spreadsheetUrl:
-      meta.spreadsheetUrl ||
-      `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`
+    spreadsheetUrl: safeGoogleDriveUrl(
+      meta.spreadsheetUrl,
+      `https://docs.google.com/spreadsheets/d/${encodedSheetId}/edit`
+    )
   };
 }
 
@@ -421,15 +478,18 @@ export async function uploadJsonBackupToGoogleDrive(
   if (!res.ok) {
     const errText = await res.text();
     throw new Error(
-      `Failed to upload JSON backup to Google Drive (${res.status}): ${errText.slice(0, 200)}`
+      formatGoogleApiError('Failed to upload JSON backup to Google Drive', res.status, errText)
     );
   }
 
   const data = await res.json();
+  const encodedFileId = encodeURIComponent(String(data.id || ''));
   return {
     fileId: data.id,
     fileName: data.name || fileName,
-    webViewLink:
-      data.webViewLink || `https://drive.google.com/file/d/${data.id}/view`
+    webViewLink: safeGoogleDriveUrl(
+      data.webViewLink,
+      `https://drive.google.com/file/d/${encodedFileId}/view`
+    )
   };
 }

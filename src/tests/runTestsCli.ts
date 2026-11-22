@@ -1,9 +1,8 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
   ClanEFundDatabase,
-  DEFAULT_MAMAS_BUCKET_LABELS,
   INITIAL_EFUND_DB,
   MAMAS_SAVINGS_DATA,
   MamasSavingsState,
@@ -11,21 +10,7 @@ import {
   calculateTotals,
   formatPHP
 } from '../data/initialLedger';
-import {
-  ADMIN_EMAIL,
-  PRODUCTION_FIREBASE_CONFIG,
-  SHARED_LEDGER_ID,
-  buildTransactionCreatePayload,
-  buildTransactionUpdatePayload,
-  clampNumber,
-  defaultMamasRecordNote,
-  formatIsoOrSerialDate,
-  isLedgerAdmin,
-  normalizeMamasBucketLabels,
-  normalizeMamasCustomBuckets,
-  sanitizeDocId,
-  sanitizeMembersList
-} from '../services/firebaseDb';
+import { PRODUCTION_FIREBASE_CONFIG } from '../services/firebaseDb';
 import { runAllUnitTests } from './diagnosticsSuite';
 
 interface CliTestResult {
@@ -57,7 +42,7 @@ console.log('===================================================================
 // ---------------------------------------------------------------------------
 // PART 1: EXECUTE ALL SHARED UNIT TESTS FROM diagnosticsSuite.ts
 // ---------------------------------------------------------------------------
-console.log('--- Running Shared Unit Test Suite (UT-01 to UT-12) ---');
+console.log('--- Running Shared Unit Test Suite (UT-01 to UT-13) ---');
 const unitSuiteResults = runAllUnitTests();
 for (const ut of unitSuiteResults) {
   recordTest(ut.id, 'UNIT', ut.name, () => {
@@ -129,7 +114,7 @@ recordTest(
 // ---------------------------------------------------------------------------
 // PART 2: STATIC & CONFIG PROBE TESTS (SECURITY RULES, CONFIGS, DATA INTEGRITY)
 // ---------------------------------------------------------------------------
-console.log('\n--- Running Architecture, Configuration & Security Probe Suite (PT-01 to PT-06) ---');
+console.log('\n--- Running Architecture, Configuration & Security Probe Suite (PT-01 to PT-09) ---');
 
 recordTest(
   'PT-01',
@@ -141,7 +126,7 @@ recordTest(
     assert.equal(devConfig.projectId, 'clan-e-fund-ledger');
     assert.equal(
       devConfig.firestoreDatabaseId,
-      'ai-studio-clanefundledger-9007d667-4fc7-4cb4-b6d8-b403e74ca30a'
+      'clanefund-dev'
     );
     assert.ok(devConfig.apiKey && devConfig.apiKey.length > 10);
     assert.equal(PRODUCTION_FIREBASE_CONFIG.projectId, 'clan-e-fund-ledger');
@@ -149,7 +134,7 @@ recordTest(
       PRODUCTION_FIREBASE_CONFIG.firestoreDatabaseId,
       'ai-studio-clanefundledger-9007d667-4fc7-4cb4-b6d8-b403e74ca30a'
     );
-    return `ActiveConfig=${devConfig.projectId} | Prod=${PRODUCTION_FIREBASE_CONFIG.projectId} | DB=${devConfig.firestoreDatabaseId}`;
+    return `ActiveConfig=${devConfig.projectId} | Prod=${PRODUCTION_FIREBASE_CONFIG.projectId} | DevDB=${devConfig.firestoreDatabaseId} | ProdDB=${PRODUCTION_FIREBASE_CONFIG.firestoreDatabaseId}`;
   }
 );
 
@@ -381,6 +366,49 @@ recordTest(
     );
 
     return 'Verified valueInputOption: RAW, CSV Blob download, formula neutralization, and named database ID routing';
+  }
+);
+
+recordTest(
+  'PT-09',
+  'PROBE',
+  'Probe App CSV sanitization, JSON import bounds, safe Drive URLs, relative asset path, zero unreferenced screenshots, and hardened Firestore schema rules',
+  () => {
+    const appSource = readFileSync(resolve(process.cwd(), 'src/App.tsx'), 'utf-8');
+    const dbViewSource = readFileSync(
+      resolve(process.cwd(), 'src/components/DatabaseManagementView.tsx'),
+      'utf-8'
+    );
+    const rulesSource = readFileSync(resolve(process.cwd(), 'firestore.rules'), 'utf-8');
+    const assetFiles = readdirSync(resolve(process.cwd(), 'public/assets/aistudio')).sort();
+
+    assert.ok(
+      appSource.includes('sanitizeCsvCell(t.description)') &&
+        appSource.includes('sanitizeCsvCell(t.memberOrBeneficiary)'),
+      'App.tsx handleDownloadCsv must wrap exported fields in sanitizeCsvCell()'
+    );
+    assert.ok(
+      appSource.includes('MAX_IMPORT_JSON_BYTES'),
+      'App.tsx handleImportJsonFile must enforce a file size limit'
+    );
+    assert.ok(
+      dbViewSource.includes('safeGoogleDriveUrl(') &&
+        !dbViewSource.includes('src="/assets/aistudio/'),
+      'DatabaseManagementView.tsx must use safeGoogleDriveUrl() and relative ./assets/ paths'
+    );
+    assert.deepEqual(
+      assetFiles,
+      ['image_898f47ed.png'],
+      `public/assets/aistudio should only contain referenced image_898f47ed.png, found: ${assetFiles.join(', ')}`
+    );
+    assert.ok(
+      rulesSource.includes('isValidTransaction(incoming(), ledgerId)') &&
+        rulesSource.includes('isValidMamasSavings(incoming())') &&
+        rulesSource.includes('resource.data.ledgerId == ledgerId'),
+      'firestore.rules must enforce schema validation and ledgerId query constraint'
+    );
+
+    return 'Verified App CSV sanitization, JSON import bounds, safe Drive URLs, clean public assets, and strict Firestore rules';
   }
 );
 

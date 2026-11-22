@@ -48,6 +48,14 @@ type MamasEntryType =
   | 'mhariz_repayment'
   | string;
 
+function getLocalIsoDate(): string {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
 /**
  * Formats an ISO date string (YYYY-MM-DD) or Excel serial date into a friendly human date
  * like "Sep 30, 2026" so raw spreadsheet serial numbers (e.g., "45838.0") never appear.
@@ -255,7 +263,7 @@ export const MamasSavingsView: React.FC<MamasSavingsViewProps> = ({
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingRecord, setEditingRecord] = useState<MamasSavingsEntry | null>(null);
   const [entryType, setEntryType] = useState<MamasEntryType>('invest_deposit');
-  const [entryDate, setEntryDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [entryDate, setEntryDate] = useState(() => getLocalIsoDate());
   const [entryAmount, setEntryAmount] = useState('5000');
   const [entryNotes, setEntryNotes] = useState('');
   const [isModalSaving, setIsModalSaving] = useState(false);
@@ -282,7 +290,7 @@ export const MamasSavingsView: React.FC<MamasSavingsViewProps> = ({
   const [newBucketDescription, setNewBucketDescription] = useState('');
   const [isBucketSaving, setIsBucketSaving] = useState(false);
 
-  const todayStr = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const todayStr = useMemo(() => getLocalIsoDate(), []);
 
   // Compute chronological running balances for every record (including custom buckets)
   const recordsWithRunningBalances = useMemo(() => {
@@ -845,7 +853,7 @@ export const MamasSavingsView: React.FC<MamasSavingsViewProps> = ({
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `mamas-personal-savings-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.download = `mamas-personal-savings-${getLocalIsoDate()}.csv`;
     link.click();
     URL.revokeObjectURL(url);
   };
@@ -1121,15 +1129,6 @@ export const MamasSavingsView: React.FC<MamasSavingsViewProps> = ({
                 className="rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100 transition-colors whitespace-nowrap shrink-0"
               >
                 - {bucketLabels.atmLabel} Withdrawal
-              </button>
-              <button
-                type="button"
-                onClick={openBucketConfigModal}
-                className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors whitespace-nowrap shrink-0 inline-flex items-center gap-1"
-                title="Add a new account bucket or rename existing buckets"
-              >
-                <Plus className="h-3.5 w-3.5 text-purple-700" />
-                <span>Add Bucket</span>
               </button>
             </div>
           </div>
@@ -2018,6 +2017,7 @@ export const MamasSavingsView: React.FC<MamasSavingsViewProps> = ({
                   type="number"
                   inputMode="decimal"
                   step="0.01"
+                  min="0.01"
                   required
                   value={entryAmount}
                   onChange={(e) => setEntryAmount(e.target.value)}

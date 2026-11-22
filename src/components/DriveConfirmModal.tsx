@@ -1,26 +1,20 @@
 import React, { useEffect } from 'react';
-import { AlertTriangle, Database, Trash2, X, Loader2 } from 'lucide-react';
-import { ClanEFundDatabase, calculateTotals, formatPHP } from '../data/initialLedger';
-import { FIRESTORE_DATABASE_ID } from '../services/firebaseDb';
+import { AlertTriangle, Trash2, X, Loader2 } from 'lucide-react';
 
 interface DriveConfirmModalProps {
   isOpen: boolean;
-  mode: 'overwrite_firestore_with_default' | 'delete_row';
   onClose: () => void;
   onConfirm: () => void;
   isSubmitting?: boolean;
-  db: ClanEFundDatabase;
   targetRowDescription?: string;
   targetRowDate?: string;
 }
 
 export const DriveConfirmModal: React.FC<DriveConfirmModalProps> = ({
   isOpen,
-  mode,
   onClose,
   onConfirm,
   isSubmitting = false,
-  db,
   targetRowDescription,
   targetRowDate
 }) => {
@@ -34,9 +28,6 @@ export const DriveConfirmModal: React.FC<DriveConfirmModalProps> = ({
   }, [isOpen]);
 
   if (!isOpen) return null;
-
-  const totals = calculateTotals(db);
-  const isDeleteRow = mode === 'delete_row';
 
   return (
     <div
@@ -55,9 +46,7 @@ export const DriveConfirmModal: React.FC<DriveConfirmModalProps> = ({
           <div className="flex items-center gap-2.5 min-w-0 pr-2">
             <AlertTriangle className="h-5 w-5 text-red-600 shrink-0" />
             <h2 className="text-base font-bold text-slate-900 truncate">
-              {isDeleteRow
-                ? 'Confirm Transaction Deletion'
-                : 'Reset Firestore Database?'}
+              Confirm Transaction Deletion
             </h2>
           </div>
           <button
@@ -72,57 +61,13 @@ export const DriveConfirmModal: React.FC<DriveConfirmModalProps> = ({
         </div>
 
         <div className="flex-1 overflow-y-auto overscroll-contain p-4 sm:p-6 space-y-4 text-sm text-slate-600">
-          {isDeleteRow ? (
-            <p>
-              Are you sure you want to permanently remove the ledger entry{' '}
-              <strong className="text-slate-900">
-                &ldquo;{targetRowDescription}&rdquo; ({targetRowDate})
-              </strong>{' '}
-              from your Clan E-Fund record?
-            </p>
-          ) : (
-            <>
-              <p>
-                This action will reset your Firebase Firestore ledger and transactions to all{' '}
-                <strong className="text-slate-900">{db.transactions.length} migrated spreadsheet records</strong>{' '}
-                from January 2024 through October 2026, totaling{' '}
-                <strong className="font-mono tabular-nums text-slate-900">{formatPHP(totals.totalFund)}</strong>.
-              </p>
-
-              <div className="rounded-md border border-slate-200 bg-slate-50 p-3.5 space-y-2 text-xs">
-                <div className="flex items-center gap-2 font-semibold text-slate-900">
-                  <Database className="h-4 w-4 text-emerald-700 shrink-0" />
-                  <span className="truncate">Firestore DB: {FIRESTORE_DATABASE_ID}</span>
-                </div>
-                <div className="border-t border-slate-200 pt-2 mt-2 grid grid-cols-2 gap-2">
-                  <div>
-                    <span className="text-slate-500 block">Entries to Restore</span>
-                    <span className="font-mono tabular-nums font-semibold text-slate-900">
-                      {db.transactions.length} rows
-                    </span>
-                  </div>
-                  <div>
-                    <span className="text-slate-500 block">Restored Total Fund</span>
-                    <span className="font-mono tabular-nums font-semibold text-emerald-700">
-                      {formatPHP(totals.totalFund)}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="text-slate-500 block">Cash on Hand</span>
-                    <span className="font-mono tabular-nums text-slate-800">
-                      {formatPHP(totals.amountOnHand)}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="text-slate-500 block">BPI MMF + Short Term</span>
-                    <span className="font-mono tabular-nums text-slate-800">
-                      {formatPHP(totals.bpiMoneyMarket + totals.bpiShortTerm)}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </>
-          )}
+          <p>
+            Are you sure you want to permanently remove the ledger entry{' '}
+            <strong className="text-slate-900">
+              &ldquo;{targetRowDescription}&rdquo; ({targetRowDate})
+            </strong>{' '}
+            from your Clan E-Fund record?
+          </p>
         </div>
 
         <div className="flex shrink-0 items-center justify-end gap-2.5 border-t border-slate-200 bg-white px-4 py-3.5 pb-[max(0.875rem,env(safe-area-inset-bottom))] sm:px-6 sm:py-4">
@@ -143,12 +88,12 @@ export const DriveConfirmModal: React.FC<DriveConfirmModalProps> = ({
             {isSubmitting ? (
               <>
                 <Loader2 className="h-3.5 w-3.5 animate-spin text-white" />
-                <span>{isDeleteRow ? 'Deleting...' : 'Updating Firestore...'}</span>
+                <span>Deleting...</span>
               </>
             ) : (
               <>
-                {isDeleteRow && <Trash2 className="h-3.5 w-3.5" />}
-                <span>{isDeleteRow ? 'Delete Transaction' : 'Confirm Reset'}</span>
+                <Trash2 className="h-3.5 w-3.5" />
+                <span>Delete Transaction</span>
               </>
             )}
           </button>

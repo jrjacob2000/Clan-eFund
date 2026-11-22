@@ -26,6 +26,14 @@ interface EntryFormModalProps {
 
 type AccountTarget = 'amountOnHand' | 'bpiMoneyMarket' | 'bpiShortTerm';
 
+function getLocalIsoDate(): string {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
 export const EntryFormModal: React.FC<EntryFormModalProps> = ({
   isOpen,
   onClose,
@@ -37,11 +45,12 @@ export const EntryFormModal: React.FC<EntryFormModalProps> = ({
   presetDate = null,
   isSaving = false
 }) => {
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = getLocalIsoDate();
 
   const [mode, setMode] = useState<EntryPresetMode>(presetMode);
   const [date, setDate] = useState(presetDate || todayStr);
   const [description, setDescription] = useState('');
+  const [formError, setFormError] = useState<string | null>(null);
   const [category, setCategory] = useState<EntryCategory>('Contribution');
   const [memberOrBeneficiary, setMemberOrBeneficiary] = useState('Nene');
   const [customMember, setCustomMember] = useState('');
@@ -72,6 +81,7 @@ export const EntryFormModal: React.FC<EntryFormModalProps> = ({
 
   useEffect(() => {
     if (!isOpen) return;
+    setFormError(null);
 
     if (editingEntry) {
       setMode('custom');
@@ -137,7 +147,7 @@ export const EntryFormModal: React.FC<EntryFormModalProps> = ({
       setBpiShortTerm(0);
       setMemberLoan(0);
       setHighlightAlert(false);
-      setNotes('Emergency medical reimbursement to replenish Cash on Hand');
+      setNotes('');
     } else if (presetMode === 'transfer') {
       setCategory('Internal Transfer');
       setMemberOrBeneficiary('BPI Funds');
@@ -162,7 +172,7 @@ export const EntryFormModal: React.FC<EntryFormModalProps> = ({
       setBpiShortTerm(0);
       setMemberLoan(0);
       setHighlightAlert(false);
-      setNotes('Accrued investment return / NAVPU gain');
+      setNotes('');
     } else if (presetMode === 'loan') {
       setCategory('Member Loan');
       setMemberOrBeneficiary(defaultMember);
@@ -174,7 +184,7 @@ export const EntryFormModal: React.FC<EntryFormModalProps> = ({
       setBpiShortTerm(0);
       setMemberLoan(5000);
       setHighlightAlert(false);
-      setNotes('Member loan assistance extended from E-Fund cash');
+      setNotes('');
     } else if (presetMode === 'loan_repayment') {
       setCategory('Loan Repayment');
       setMemberOrBeneficiary(defaultMember);
@@ -186,7 +196,7 @@ export const EntryFormModal: React.FC<EntryFormModalProps> = ({
       setBpiShortTerm(0);
       setMemberLoan(-5000);
       setHighlightAlert(false);
-      setNotes('Collected member loan repayment back into Cash on Hand');
+      setNotes('');
     }
   }, [isOpen, editingEntry, presetMember, presetMode, presetDate, members, todayStr]);
 
@@ -279,12 +289,61 @@ export const EntryFormModal: React.FC<EntryFormModalProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setFormError(null);
+
+    const safeOnHand = Number(amountOnHand) || 0;
+    const safeMmf = Number(bpiMoneyMarket) || 0;
+    const safeShortTerm = Number(bpiShortTerm) || 0;
+    const safeLoan = Number(memberLoan) || 0;
+
+    if (safeOnHand === 0 && safeMmf === 0 && safeShortTerm === 0 && safeLoan === 0) {
+      setFormError('Please enter a non-zero amount in at least one account bucket.');
+      return;
+    }
+
     const resolvedMember =
       memberOrBeneficiary === '__NEW__' && customMember.trim()
         ? customMember.trim()
         : memberOrBeneficiary;
 
-    const finalDescription = description.trim() || resolvedMember || 'Ledger Entry';
+    const accountLabel = (acct: AccountTarget) =>
+      acct === 'bpiMoneyMarket'
+        ? 'Money Market Fund'
+        : acct === 'bpiShortTerm'
+        ? 'Short Term Fund'
+        : 'Cash on Hand';
+
+    let autoTitle = resolvedMember || 'Ledger Entry';
+    if (mode === 'contribution') {
+      autoTitle = resolvedMember;
+    } else if (mode === 'reimbursement') {
+      autoTitle = `${resolvedMember}'s medical reimbursement`;
+    } else if (mode === 'transfer') {
+      autoTitle = `Transfer to ${accountLabel(transferTo)}`;
+    } else if (mode === 'yield') {
+      autoTitle = `${accountLabel(targetAccount)} Yield`;
+    } else if (mode === 'loan') {
+      autoTitle = `Lent to ${resolvedMember}`;
+    } else if (mode === 'loan_repayment') {
+      autoTitle = `Loan payment collected from ${resolvedMember}`;
+    } else if (mode === 'medical' || mode === 'custom') {
+      autoTitle =
+        description.trim() ||
+        (resolvedMember === 'Mama'
+          ? 'Gamot at check up ni Mama'
+          : resolvedMember === 'Parents'
+          ? 'Parents medical check-up & medicines'
+          : resolvedMember === 'Papa'
+          ? 'Gamot at check up ni Papa'
+          : resolvedMember || 'Ledger Entry');
+    }
+
+    const finalNotes =
+      mode === 'medical'
+        ? undefined
+        : notes.trim() && notes.trim() !== autoTitle
+        ? notes.trim()
+        : undefined;
 
     onSave(
       {
@@ -294,7 +353,7 @@ export const EntryFormModal: React.FC<EntryFormModalProps> = ({
           editingEntry?.displayDate && editingEntry.date === date
             ? editingEntry.displayDate
             : formatDisplayDate(date),
-        description: finalDescription,
+        description: autoTitle,
         category,
         memberOrBeneficiary: resolvedMember,
         amountOnHand: Number(amountOnHand) || 0,
@@ -302,7 +361,7 @@ export const EntryFormModal: React.FC<EntryFormModalProps> = ({
         bpiShortTerm: Number(bpiShortTerm) || 0,
         memberLoan: Number(memberLoan) || 0,
         highlightAlert,
-        notes: notes.trim() || undefined
+        notes: finalNotes
       },
       editingEntry?.id,
       memberOrBeneficiary === '__NEW__' && customMember.trim() ? customMember.trim() : undefined
@@ -480,7 +539,11 @@ export const EntryFormModal: React.FC<EntryFormModalProps> = ({
               </button>
             </div>
 
-            <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 sm:gap-4">
+            <div
+              className={`grid grid-cols-1 gap-3.5 ${
+                mode === 'transfer' || mode === 'yield' ? '' : 'sm:grid-cols-2 sm:gap-4'
+              }`}
+            >
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Transaction Date
@@ -494,56 +557,81 @@ export const EntryFormModal: React.FC<EntryFormModalProps> = ({
                 />
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  {mode === 'medical' ? 'Parent Beneficiary' : 'Clan Member / Source'}
-                </label>
-                <select
-                  value={memberOrBeneficiary}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    setMemberOrBeneficiary(val);
-                    if (mode === 'contribution' && val !== '__NEW__') {
-                      setDescription(val);
-                      if (val === 'Nene') setQuickAmount('5000');
-                      else setQuickAmount('1000');
-                    } else if (mode === 'medical') {
-                      if (val === 'Mama') setDescription('Gamot at check up ni Mama');
-                      else if (val === 'Papa') setDescription('Gamot at check up ni Papa');
-                      else if (val === 'Parents') setDescription('Parents check-up & medicines');
-                    }
-                  }}
-                  className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-base sm:text-sm text-slate-900 focus:border-slate-900 focus:outline-hidden"
-                >
-                  <optgroup label="Parents (Medical Beneficiaries)">
-                    <option value="Papa">Papa (Medical Beneficiary)</option>
-                    <option value="Mama">Mama (Medical Beneficiary)</option>
-                    <option value="Parents">Parents (Papa &amp; Mama)</option>
-                  </optgroup>
-                  <optgroup label="Clan Contributors">
-                    {members.map((m) => (
-                      <option key={m} value={m}>
-                        {m}
-                      </option>
-                    ))}
-                  </optgroup>
-                  <optgroup label="Investments & Other">
-                    <option value="BPI Funds">Bank / Investment Fund</option>
-                    <option value="__NEW__">+ Add New Clan Member / Bank...</option>
-                  </optgroup>
-                </select>
-              </div>
+              {mode !== 'transfer' && mode !== 'yield' && (
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    {mode === 'medical' ? 'Parent Beneficiary' : 'Clan Member'}
+                  </label>
+                  <select
+                    value={memberOrBeneficiary}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setMemberOrBeneficiary(val);
+                      if (mode === 'contribution' && val !== '__NEW__') {
+                        setDescription(val);
+                        if (val === 'Nene') setQuickAmount('5000');
+                        else setQuickAmount('1000');
+                      } else if (mode === 'medical') {
+                        if (val === 'Mama') setDescription('Gamot at check up ni Mama');
+                        else if (val === 'Papa') setDescription('Gamot at check up ni Papa');
+                        else if (val === 'Parents') setDescription('Parents check-up & medicines');
+                      }
+                    }}
+                    className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-base sm:text-sm text-slate-900 focus:border-slate-900 focus:outline-hidden"
+                  >
+                    {mode === 'medical' ? (
+                      <>
+                        <optgroup label="Parents (Medical Beneficiaries)">
+                          <option value="Papa">Papa (Medical Beneficiary)</option>
+                          <option value="Mama">Mama (Medical Beneficiary)</option>
+                          <option value="Parents">Parents (Papa &amp; Mama)</option>
+                        </optgroup>
+                        <optgroup label="Clan Contributors">
+                          {members.map((m) => (
+                            <option key={m} value={m}>
+                              {m}
+                            </option>
+                          ))}
+                        </optgroup>
+                      </>
+                    ) : (
+                      <>
+                        <optgroup label="Clan Contributors">
+                          {members.map((m) => (
+                            <option key={m} value={m}>
+                              {m}
+                            </option>
+                          ))}
+                          <option value="__NEW__">+ Add New Clan Member...</option>
+                        </optgroup>
+                        {mode === 'custom' && (
+                          <>
+                            <optgroup label="Parents (Medical Beneficiaries)">
+                              <option value="Papa">Papa (Medical Beneficiary)</option>
+                              <option value="Mama">Mama (Medical Beneficiary)</option>
+                              <option value="Parents">Parents (Papa &amp; Mama)</option>
+                            </optgroup>
+                            <optgroup label="Investments & Other">
+                              <option value="BPI Funds">Bank / Investment Fund</option>
+                            </optgroup>
+                          </>
+                        )}
+                      </>
+                    )}
+                  </select>
+                </div>
+              )}
             </div>
 
-            {memberOrBeneficiary === '__NEW__' && (
+            {mode !== 'transfer' && mode !== 'yield' && memberOrBeneficiary === '__NEW__' && (
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  New Clan Member / Bank Name
+                  New Clan Member Name
                 </label>
                 <input
                   type="text"
                   required
-                  placeholder="e.g. Carlo or Metrobank UITF"
+                  placeholder="e.g. Carlo"
                   value={customMember}
                   onChange={(e) => {
                     setCustomMember(e.target.value);
@@ -553,39 +641,6 @@ export const EntryFormModal: React.FC<EntryFormModalProps> = ({
                 />
               </div>
             )}
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Transaction Title / Description
-              </label>
-              <input
-                type="text"
-                required
-                placeholder="e.g. Nene, Gamot ni Papa, Transfer to Money Market"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                className="w-full rounded-md border border-slate-300 px-3 py-2 text-base sm:text-sm text-slate-900 focus:border-slate-900 focus:outline-hidden"
-              />
-              {mode === 'medical' && (
-                <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                  {[
-                    `Gamot ni ${memberOrBeneficiary === 'Mama' ? 'Mama' : 'Papa'}`,
-                    `${memberOrBeneficiary === 'Mama' ? 'Mama' : 'Papa'} checkup & labs`,
-                    `${memberOrBeneficiary === 'Mama' ? 'Mama' : 'Papa'} checkup/xray`,
-                    'Parents maintenance medicine'
-                  ].map((template) => (
-                    <button
-                      key={template}
-                      type="button"
-                      onClick={() => setDescription(template)}
-                      className="rounded border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs text-slate-700 hover:border-slate-400 hover:bg-white"
-                    >
-                      {template}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
 
             {mode !== 'custom' ? (
               <div className="rounded-md border border-slate-200 bg-slate-50 p-3.5 sm:p-4 space-y-3.5">
@@ -807,30 +862,88 @@ export const EntryFormModal: React.FC<EntryFormModalProps> = ({
               </div>
             </div>
 
-            <div className="flex items-center justify-between">
-              <label className="flex items-center gap-2.5 py-1 text-xs text-slate-700 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={highlightAlert}
-                  onChange={(e) => setHighlightAlert(e.target.checked)}
-                  className="h-4 w-4 rounded border-slate-300 text-red-600 focus:ring-red-500"
-                />
-                <span>Mark as urgent medical disbursement</span>
-              </label>
-            </div>
+            {(mode === 'medical' ||
+              (mode === 'custom' && category === 'Medical Disbursement')) && (
+              <div className="flex items-center justify-between">
+                <label className="flex items-center gap-2.5 py-1 text-xs text-slate-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={highlightAlert}
+                    onChange={(e) => setHighlightAlert(e.target.checked)}
+                    className="h-4 w-4 rounded border-slate-300 text-red-600 focus:ring-red-500"
+                  />
+                  <span>Mark as urgent medical disbursement</span>
+                </label>
+              </div>
+            )}
 
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Optional Note
+                {mode === 'medical'
+                  ? 'Medical Particulars'
+                  : mode === 'custom'
+                  ? 'Particulars / Description'
+                  : 'Optional Note'}
               </label>
               <input
                 type="text"
-                placeholder="Optional receipt details, clinic name, or bank reference..."
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
+                required={mode === 'medical' || mode === 'custom'}
+                placeholder={
+                  mode === 'medical'
+                    ? 'e.g. Gamot at check up ni Papa, lab tests, clinic receipt...'
+                    : mode === 'custom'
+                    ? 'e.g. Nene, Gamot ni Papa, Transfer to Money Market...'
+                    : 'Optional receipt details or bank reference...'
+                }
+                value={mode === 'medical' || mode === 'custom' ? description : notes}
+                onChange={(e) =>
+                  mode === 'medical' || mode === 'custom'
+                    ? setDescription(e.target.value)
+                    : setNotes(e.target.value)
+                }
                 className="w-full rounded-md border border-slate-300 px-3 py-2 sm:py-1.5 text-base sm:text-xs text-slate-900 focus:border-slate-900 focus:outline-hidden"
               />
+              {mode === 'medical' && (
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                  {[
+                    `Gamot ni ${memberOrBeneficiary === 'Mama' ? 'Mama' : 'Papa'}`,
+                    `${memberOrBeneficiary === 'Mama' ? 'Mama' : 'Papa'} checkup & labs`,
+                    `${memberOrBeneficiary === 'Mama' ? 'Mama' : 'Papa'} checkup/xray`,
+                    'Parents maintenance medicine'
+                  ].map((template) => (
+                    <button
+                      key={template}
+                      type="button"
+                      onClick={() => setDescription(template)}
+                      className="rounded border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs text-slate-700 hover:border-slate-400 hover:bg-white"
+                    >
+                      {template}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
+
+            {mode === 'custom' && (Boolean(editingEntry) || notes.trim().length > 0) && (
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Optional Note
+                </label>
+                <input
+                  type="text"
+                  placeholder="Optional receipt details or bank reference..."
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  className="w-full rounded-md border border-slate-300 px-3 py-2 sm:py-1.5 text-base sm:text-xs text-slate-900 focus:border-slate-900 focus:outline-hidden"
+                />
+              </div>
+            )}
+
+            {formError && (
+              <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-red-700">
+                {formError}
+              </div>
+            )}
           </div>
 
           {/* Sticky Modal Footer */}

@@ -1,39 +1,35 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { User } from 'firebase/auth';
 import {
   Plus,
   Search,
   Download,
-  Upload,
-  RefreshCw,
   Database,
   Pencil,
   Trash2,
   SlidersHorizontal,
   CheckCircle2,
   AlertCircle,
-  FileJson,
   ArrowUpDown,
   ArrowRight,
-  Eye,
   ShieldCheck,
-  ExternalLink,
   LayoutDashboard,
   ReceiptText,
   Users,
   HeartPulse,
   PiggyBank,
   HandCoins,
-  Lock,
   HelpCircle
 } from 'lucide-react';
 import {
   APP_VERSION,
   ClanEFundDatabase,
   EFundTransaction,
+  EntryCategory,
   INITIAL_EFUND_DB,
   MAMAS_SAVINGS_DATA,
   EMPTY_MAMAS_SAVINGS_STATE,
+  MamasSavingsEntry,
   MamasSavingsState,
   calculateMamasTotals,
   calculateTotals,
@@ -44,7 +40,6 @@ import {
   EXPORT_JSON_FILENAME,
   FIRESTORE_DATABASE_ID,
   MAMAS_SAVINGS_CACHE_KEY,
-  SHARED_LEDGER_ID,
   clampNumber,
   deleteTransactionFromFirestore,
   ensureSharedLedgerInitializedInFirestore,
@@ -52,6 +47,8 @@ import {
   initAuth,
   isLedgerAdmin,
   logout,
+  normalizeMamasBucketLabels,
+  normalizeMamasCustomBuckets,
   purgeMamasSavingsLocalCache,
   replaceEntireLedgerInFirestore,
   sanitizeCsvCell,
@@ -63,7 +60,6 @@ import {
   subscribeToSharedLedger,
   updateLedgerConfigInFirestore
 } from './services/firebaseDb';
-import { GoogleSignInButton } from './components/GoogleSignInButton';
 import { EntryFormModal, EntryPresetMode } from './components/EntryFormModal';
 import { DriveConfirmModal } from './components/DriveConfirmModal';
 import { MamasSavingsView } from './components/MamasSavingsView';
@@ -85,7 +81,18 @@ type FilterTab =
 
 type AccountFilter = 'ALL' | 'amountOnHand' | 'bpiMoneyMarket' | 'bpiShortTerm' | 'memberLoan';
 
-const LOCAL_STORAGE_CACHE_KEY = 'clan_efund_working_copy_v6';
+const LOCAL_STORAGE_CACHE_KEY = `clan_efund_working_copy_v6_${FIRESTORE_DATABASE_ID}`;
+const MAX_IMPORT_JSON_BYTES = 5 * 1024 * 1024; // 5 MB safety limit
+const VALID_IMPORT_CATEGORIES = new Set<EntryCategory>([
+  'Contribution',
+  'Medical Disbursement',
+  'Internal Transfer',
+  'Reimbursement',
+  'Investment Yield',
+  'Opening Balance',
+  'Member Loan',
+  'Loan Repayment'
+]);
 
 export const LEDGER_MONTH_OPTIONS = [
   { value: 'ALL', label: 'All Months', short: 'All' },
@@ -154,8 +161,6 @@ export const MATRIX_MONTHS_BY_YEAR: Record<
   ]
 };
 
-const MONTHS_2026 = MATRIX_MONTHS_BY_YEAR['2026'];
-
 function formatHumanDate(isoDate: string): string {
   const parts = isoDate.split('-');
   if (parts.length !== 3) return isoDate;
@@ -180,10 +185,13 @@ function getMonthHeaderLabel(isoDate: string): string {
 }
 
 /**
- * Resolves the primary amount, direction, and account routing for a transaction
- * so we don't need 3 mostly-empty spreadsheet columns on every row.
+ * Resolves the primary amount, direction, account routing, and de-duplicated
+ * row labels for a transaction so row subtitles don't repeat the title/member/category.
  */
 function resolveTransactionPresentation(tx: EFundTransaction): {
+  displayTitle: string;
+  showMemberBadge: boolean;
+  cleanNote?: string;
   primaryAmount: number;
   isInternalTransfer: boolean;
   fromAccountLabel?: string;
@@ -194,11 +202,48 @@ function resolveTransactionPresentation(tx: EFundTransaction): {
   const memberLoan = tx.memberLoan || 0;
   const net = amountOnHand + bpiMoneyMarket + bpiShortTerm + memberLoan;
 
+  const rawDesc = (tx.description || '').trim();
+  const rawMember = (tx.memberOrBeneficiary || '').trim();
+  const displayTitle =
+    rawDesc && rawMember && rawDesc.toLowerCase() === rawMember.toLowerCase()
+      ? rawMember
+      : rawDesc
+      ? rawDesc.charAt(0).toUpperCase() + rawDesc.slice(1)
+      : rawMember || tx.category;
+
+  const titleLower = displayTitle.toLowerCase();
+  const memberLower = rawMember.toLowerCase();
+  const showMemberBadge =
+    Boolean(rawMember) &&
+    memberLower !== 'bpi funds' &&
+    !titleLower.includes(memberLower);
+
+  const rawNote = (tx.notes || '').trim();
+  const noteLower = rawNote.toLowerCase();
+  const isRedundantBoilerplateNote =
+    !rawNote ||
+    noteLower === titleLower ||
+    noteLower.startsWith('monthly contribution from ') ||
+    noteLower.startsWith('medical expense for ') ||
+    noteLower === 'internal fund transfer / investment placement' ||
+    noteLower === 'emergency medical reimbursement to replenish cash on hand' ||
+    noteLower === 'accrued investment return / navpu gain' ||
+    noteLower === 'member loan assistance extended from e-fund cash' ||
+    noteLower === 'collected member loan repayment back into cash on hand';
+  const cleanNote = isRedundantBoilerplateNote ? undefined : rawNote;
+
+  const base = {
+    displayTitle,
+    showMemberBadge,
+    cleanNote
+  };
+
   if (tx.category === 'Member Loan' || memberLoan > 0) {
     let sourceLabel = 'Cash on Hand';
     if (bpiMoneyMarket < 0) sourceLabel = 'Money Market Fund';
     else if (bpiShortTerm < 0) sourceLabel = 'Short Term Fund';
     return {
+      ...base,
       primaryAmount: memberLoan > 0 ? memberLoan : Math.abs(amountOnHand),
       isInternalTransfer: false,
       fromAccountLabel: sourceLabel,
@@ -212,6 +257,7 @@ function resolveTransactionPresentation(tx: EFundTransaction): {
     if (bpiMoneyMarket > 0) targetLabel = 'Money Market Fund';
     else if (bpiShortTerm > 0) targetLabel = 'Short Term Fund';
     return {
+      ...base,
       primaryAmount: Math.abs(memberLoan || amountOnHand),
       isInternalTransfer: false,
       fromAccountLabel: 'Member Loan (Receivable)',
@@ -243,6 +289,7 @@ function resolveTransactionPresentation(tx: EFundTransaction): {
     else if (amountOnHand > 0) toLabel = 'Cash on Hand';
 
     return {
+      ...base,
       primaryAmount: transferAmt,
       isInternalTransfer: true,
       fromAccountLabel: fromLabel,
@@ -253,6 +300,7 @@ function resolveTransactionPresentation(tx: EFundTransaction): {
 
   if (amountOnHand !== 0 && bpiMoneyMarket === 0 && bpiShortTerm === 0) {
     return {
+      ...base,
       primaryAmount: amountOnHand,
       isInternalTransfer: false,
       accountSummaryLabel: 'Cash on Hand'
@@ -261,6 +309,7 @@ function resolveTransactionPresentation(tx: EFundTransaction): {
 
   if (bpiMoneyMarket !== 0 && amountOnHand === 0 && bpiShortTerm === 0) {
     return {
+      ...base,
       primaryAmount: bpiMoneyMarket,
       isInternalTransfer: false,
       accountSummaryLabel: 'Money Market Fund'
@@ -269,6 +318,7 @@ function resolveTransactionPresentation(tx: EFundTransaction): {
 
   if (bpiShortTerm !== 0 && amountOnHand === 0 && bpiMoneyMarket === 0) {
     return {
+      ...base,
       primaryAmount: bpiShortTerm,
       isInternalTransfer: false,
       accountSummaryLabel: 'Short Term Fund'
@@ -276,6 +326,7 @@ function resolveTransactionPresentation(tx: EFundTransaction): {
   }
 
   return {
+    ...base,
     primaryAmount: net,
     isInternalTransfer: false,
     accountSummaryLabel: 'Multi-Account Split'
@@ -355,17 +406,13 @@ export default function App() {
     }
   }, [statusBanner]);
 
-  // Confirmation Modal state (Admin-only)
+  // Confirmation Modal state (Admin-only row deletion)
   const [confirmModalState, setConfirmModalState] = useState<{
     isOpen: boolean;
-    mode: 'overwrite_firestore_with_default' | 'delete_row';
     targetRow?: EFundTransaction;
   }>({
-    isOpen: false,
-    mode: 'overwrite_firestore_with_default'
+    isOpen: false
   });
-
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Role check: Only jrjacob2000@gmail.com can access Mama's Savings and manage records
   const canManage = useMemo(() => isLedgerAdmin(user), [user]);
@@ -439,6 +486,7 @@ export default function App() {
   }, [canManage, user, activeAccount]);
 
   const handleUpdateMamasSavings = async (newState: MamasSavingsState) => {
+    const previousState = mamasState;
     const computed = calculateMamasTotals(newState);
     setMamasState(computed);
     if (!canManage || !user) return;
@@ -451,6 +499,7 @@ export default function App() {
         message: "Saved entry to Mama's personal savings and synced to Firestore."
       });
     } catch (err: any) {
+      setMamasState(previousState);
       setStatusBanner({
         type: 'error',
         message: err?.message || "Failed to sync Mama's savings to Firestore."
@@ -577,57 +626,40 @@ export default function App() {
         type: 'error',
         message: `View-Only mode: Only ${ADMIN_EMAIL} can modify or delete records.`
       });
-      setConfirmModalState({ isOpen: false, mode: 'overwrite_firestore_with_default' });
+      setConfirmModalState({ isOpen: false });
       return;
     }
 
-    if (confirmModalState.mode === 'delete_row' && confirmModalState.targetRow) {
-      const rowToDelete = confirmModalState.targetRow;
-      setDb((prev) => ({
-        ...prev,
-        lastUpdated: new Date().toISOString(),
-        transactions: prev.transactions.filter((t) => t.id !== rowToDelete.id)
-      }));
-
-      setIsSyncingFirestore(true);
-      try {
-        await deleteTransactionFromFirestore(rowToDelete.id);
-        setStatusBanner({
-          type: 'info',
-          message: `Deleted "${rowToDelete.description}" from Firebase Firestore.`
-        });
-      } catch (err: any) {
-        setStatusBanner({
-          type: 'error',
-          message: err?.message || 'Failed to delete transaction from Firestore.'
-        });
-      } finally {
-        setIsSyncingFirestore(false);
-      }
-
-      setConfirmModalState({ isOpen: false, mode: 'overwrite_firestore_with_default' });
+    const rowToDelete = confirmModalState.targetRow;
+    if (!rowToDelete) {
+      setConfirmModalState({ isOpen: false });
       return;
     }
 
-    // Mode: overwrite_firestore_with_default (Admin-only: Resets Clan E-Fund shared ledger)
-    setDb(INITIAL_EFUND_DB);
+    const previousDb = db;
+    setDb((prev) => ({
+      ...prev,
+      lastUpdated: new Date().toISOString(),
+      transactions: prev.transactions.filter((t) => t.id !== rowToDelete.id)
+    }));
+
     setIsSyncingFirestore(true);
     try {
-      await replaceEntireLedgerInFirestore(user.uid, INITIAL_EFUND_DB);
+      await deleteTransactionFromFirestore(rowToDelete.id);
       setStatusBanner({
-        type: 'success',
-        message:
-          'Reset and migrated all 107 Clan E-Fund rows (₱96,770.00) from the master spreadsheet into Firebase Firestore.'
+        type: 'info',
+        message: `Deleted "${rowToDelete.description}" from Firebase Firestore.`
       });
     } catch (err: any) {
+      setDb(previousDb);
       setStatusBanner({
         type: 'error',
-        message: err?.message || 'Failed to reset Firestore database.'
+        message: err?.message || 'Failed to delete transaction from Firestore.'
       });
     } finally {
       setIsSyncingFirestore(false);
+      setConfirmModalState({ isOpen: false });
     }
-    setConfirmModalState({ isOpen: false, mode: 'overwrite_firestore_with_default' });
   };
 
   const handleSaveEntry = async (
@@ -646,6 +678,7 @@ export default function App() {
     setIsSavingEntry(true);
     setIsSyncingFirestore(true);
 
+    const previousDb = db;
     const nextRowRef =
       db.transactions.reduce((max, t) => Math.max(max, t.rowRef || 92), 111) + 1;
     const assignedId = existingId || `row-${Date.now()}`;
@@ -654,7 +687,7 @@ export default function App() {
         ? [...db.members, newMember]
         : db.members;
 
-    // Optimistic local state update
+    // Optimistic local state update (reverted on Firestore failure)
     setDb((prev) => {
       if (existingId) {
         return {
@@ -711,6 +744,7 @@ export default function App() {
       setIsEntryModalOpen(false);
       setEditingEntry(null);
     } catch (err: any) {
+      setDb(previousDb);
       setStatusBanner({
         type: 'error',
         message: err?.message || 'Failed to save transaction to Firebase Firestore.'
@@ -726,6 +760,7 @@ export default function App() {
   ) => {
     if (!canManage || !user) return;
 
+    const previousDb = db;
     setDb((prev) => ({
       ...prev,
       lastUpdated: new Date().toISOString(),
@@ -745,6 +780,7 @@ export default function App() {
         message: 'Opening balance forward successfully updated and saved to database!'
       });
     } catch (err: any) {
+      setDb(previousDb);
       setStatusBanner({
         type: 'error',
         message: err?.message || 'Failed to update opening balance in Firestore.'
@@ -757,6 +793,7 @@ export default function App() {
   const handleUpdateCashReserveTarget = async (newTarget: number) => {
     if (!canManage || !user) return;
     const clampedTarget = Math.max(0, Math.min(500000, Math.round(newTarget)));
+    const previousDb = db;
 
     setDb((prev) => ({
       ...prev,
@@ -777,6 +814,7 @@ export default function App() {
         message: `Cash reserve target floor updated to ${formatPHP(clampedTarget)}!`
       });
     } catch (err: any) {
+      setDb(previousDb);
       setStatusBanner({
         type: 'error',
         message: err?.message || 'Failed to update cash reserve target in Firestore.'
@@ -806,12 +844,13 @@ export default function App() {
       'BPI Money Market Fund',
       'BPI Short Term',
       'Member Loans (Receivable)'
-    ];
+    ].map((h) => sanitizeCsvCell(h));
+
     const rows = db.transactions.map((t) => [
-      `"${t.date}"`,
-      `"${t.description.replace(/"/g, '""')}"`,
-      `"${t.category}"`,
-      `"${t.memberOrBeneficiary}"`,
+      sanitizeCsvCell(t.date),
+      sanitizeCsvCell(t.description),
+      sanitizeCsvCell(t.category),
+      sanitizeCsvCell(t.memberOrBeneficiary),
       t.amountOnHand.toFixed(2),
       t.bpiMoneyMarket.toFixed(2),
       t.bpiShortTerm.toFixed(2),
@@ -820,7 +859,7 @@ export default function App() {
     const currentTotals = calculateTotals(db);
     rows.push([
       '""',
-      '"Account Totals"',
+      sanitizeCsvCell('Account Totals'),
       '""',
       '""',
       currentTotals.amountOnHand.toFixed(2),
@@ -828,7 +867,16 @@ export default function App() {
       currentTotals.bpiShortTerm.toFixed(2),
       currentTotals.memberLoan.toFixed(2)
     ]);
-    rows.push(['""', '"Total Fund"', '""', '""', '', currentTotals.totalFund.toFixed(2), '', '']);
+    rows.push([
+      '""',
+      sanitizeCsvCell('Total Fund'),
+      '""',
+      '""',
+      '',
+      currentTotals.totalFund.toFixed(2),
+      '',
+      ''
+    ]);
 
     const csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -844,27 +892,198 @@ export default function App() {
     if (!canManage || !user) return;
     const file = e.target.files?.[0];
     if (!file) return;
+    if (file.size > MAX_IMPORT_JSON_BYTES) {
+      setStatusBanner({
+        type: 'error',
+        message: 'Import file exceeds the 5 MB safety limit.'
+      });
+      e.target.value = '';
+      return;
+    }
+
     const reader = new FileReader();
     reader.onload = async (ev) => {
+      const previousDb = db;
       try {
-        const parsed = JSON.parse(String(ev.target?.result)) as ClanEFundDatabase;
-        if (!parsed || !Array.isArray(parsed.transactions)) {
+        const rawParsed = JSON.parse(String(ev.target?.result)) as Record<string, any>;
+        if (!rawParsed || typeof rawParsed !== 'object') {
           throw new Error('Invalid Clan E-Fund JSON structure.');
         }
+
+        // Support both standalone Clan E-Fund JSON and full Google Drive backup envelopes
+        const ledgerSource =
+          rawParsed.clanEFundLedger && typeof rawParsed.clanEFundLedger === 'object'
+            ? rawParsed.clanEFundLedger
+            : rawParsed;
+
+        if (!Array.isArray(ledgerSource.transactions) || ledgerSource.transactions.length === 0) {
+          throw new Error('Import file must contain a non-empty transactions array.');
+        }
+        if (ledgerSource.transactions.length > 5000) {
+          throw new Error('Import file exceeds the maximum supported limit of 5,000 transactions.');
+        }
+
+        const seenIds = new Set<string>();
+        const sanitizedTransactions: EFundTransaction[] = ledgerSource.transactions.map(
+          (rawTx: any, idx: number) => {
+            if (!rawTx || typeof rawTx !== 'object') {
+              throw new Error(`Invalid transaction object at index ${idx}.`);
+            }
+            const rawDate = typeof rawTx.date === 'string' ? rawTx.date.trim() : '';
+            const safeDate = /^\d{4}-\d{2}-\d{2}$/.test(rawDate) ? rawDate : '2026-01-01';
+            const rawId =
+              typeof rawTx.id === 'string' && rawTx.id.trim()
+                ? sanitizeDocId(rawTx.id)
+                : `row-import-${idx + 1}`;
+            const uniqueId = seenIds.has(rawId) ? `${rawId}-${idx + 1}` : rawId;
+            seenIds.add(uniqueId);
+
+            const rawCat = String(rawTx.category || 'Contribution') as EntryCategory;
+            const safeCategory: EntryCategory = VALID_IMPORT_CATEGORIES.has(rawCat)
+              ? rawCat
+              : 'Contribution';
+
+            const safeDesc = String(rawTx.description || 'Imported Entry').trim().slice(0, 200);
+            const safeMember = String(rawTx.memberOrBeneficiary || 'Clan Member')
+              .trim()
+              .slice(0, 80);
+            const safeNotes =
+              typeof rawTx.notes === 'string' && rawTx.notes.trim()
+                ? rawTx.notes.trim().slice(0, 500)
+                : undefined;
+
+            return {
+              id: uniqueId,
+              rowRef:
+                typeof rawTx.rowRef === 'number' && Number.isFinite(rawTx.rowRef)
+                  ? Math.max(0, Math.round(rawTx.rowRef))
+                  : idx + 1,
+              date: safeDate,
+              displayDate:
+                typeof rawTx.displayDate === 'string' && rawTx.displayDate.trim()
+                  ? rawTx.displayDate.trim().slice(0, 32)
+                  : formatHumanDate(safeDate),
+              description: safeDesc || 'Imported Entry',
+              category: safeCategory,
+              memberOrBeneficiary: safeMember || 'Clan Member',
+              amountOnHand: clampNumber(rawTx.amountOnHand, -100_000_000, 100_000_000),
+              bpiMoneyMarket: clampNumber(rawTx.bpiMoneyMarket, -100_000_000, 100_000_000),
+              bpiShortTerm: clampNumber(rawTx.bpiShortTerm, -100_000_000, 100_000_000),
+              memberLoan: clampNumber(rawTx.memberLoan, -100_000_000, 100_000_000),
+              highlightAlert: Boolean(rawTx.highlightAlert),
+              ...(safeNotes ? { notes: safeNotes } : {})
+            };
+          }
+        );
+
+        const rawPrior =
+          ledgerSource.priorBalanceForward && typeof ledgerSource.priorBalanceForward === 'object'
+            ? ledgerSource.priorBalanceForward
+            : INITIAL_EFUND_DB.priorBalanceForward;
+
         const mergedDb: ClanEFundDatabase = {
           ...INITIAL_EFUND_DB,
-          ...parsed
+          clanName:
+            typeof ledgerSource.clanName === 'string' && ledgerSource.clanName.trim()
+              ? ledgerSource.clanName.trim().slice(0, 120)
+              : INITIAL_EFUND_DB.clanName,
+          currency: 'PHP',
+          cashReserveTarget: clampNumber(
+            ledgerSource.cashReserveTarget ?? INITIAL_EFUND_DB.cashReserveTarget ?? 15000,
+            0,
+            500_000
+          ),
+          lastUpdated: new Date().toISOString(),
+          members: sanitizeMembersList(ledgerSource.members),
+          priorBalanceForward: {
+            included: Boolean(rawPrior.included),
+            label:
+              typeof rawPrior.label === 'string' && rawPrior.label.trim()
+                ? rawPrior.label.trim().slice(0, 120)
+                : INITIAL_EFUND_DB.priorBalanceForward.label,
+            date:
+              typeof rawPrior.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(rawPrior.date.trim())
+                ? rawPrior.date.trim()
+                : INITIAL_EFUND_DB.priorBalanceForward.date,
+            amountOnHand: clampNumber(rawPrior.amountOnHand, -100_000_000, 100_000_000),
+            bpiMoneyMarket: clampNumber(rawPrior.bpiMoneyMarket, -100_000_000, 100_000_000),
+            bpiShortTerm: clampNumber(rawPrior.bpiShortTerm, -100_000_000, 100_000_000),
+            notes:
+              typeof rawPrior.notes === 'string' ? rawPrior.notes.trim().slice(0, 500) : ''
+          },
+          transactions: sanitizedTransactions
         };
-        setDb(mergedDb);
 
+        setDb(mergedDb);
         setIsSyncingFirestore(true);
         await replaceEntireLedgerInFirestore(user.uid, mergedDb);
+
+        let mamasImportedCount = 0;
+        const rawMamas = rawParsed.mamasPersonalSavings;
+        if (rawMamas && typeof rawMamas === 'object' && Array.isArray(rawMamas.records)) {
+          const sanitizedMamasRecords: MamasSavingsEntry[] = rawMamas.records
+            .slice(0, 2000)
+            .filter((r: any) => r && typeof r === 'object')
+            .map((r: any, idx: number) => {
+              const rawDate = typeof r.date === 'string' ? r.date.trim() : '';
+              const safeDate = /^\d{4}-\d{2}-\d{2}$/.test(rawDate) ? rawDate : '2026-01-01';
+              return {
+                id:
+                  typeof r.id === 'string' && r.id.trim()
+                    ? sanitizeDocId(r.id)
+                    : `mamas-import-${idx + 1}`,
+                rowRef:
+                  typeof r.rowRef === 'number' && Number.isFinite(r.rowRef)
+                    ? Math.max(0, Math.round(r.rowRef))
+                    : idx + 1,
+                date: safeDate,
+                displayDate:
+                  typeof r.displayDate === 'string' && r.displayDate.trim()
+                    ? r.displayDate.trim().slice(0, 40)
+                    : formatHumanDate(safeDate),
+                invest: clampNumber(r.invest, -100_000_000, 100_000_000),
+                mamaAtm: clampNumber(r.mamaAtm, -100_000_000, 100_000_000),
+                ...(typeof r.customBucketId === 'string' && r.customBucketId.trim()
+                  ? {
+                      customBucketId: sanitizeDocId(r.customBucketId),
+                      customAmount: clampNumber(r.customAmount, -100_000_000, 100_000_000)
+                    }
+                  : {}),
+                ...(typeof r.notes === 'string' && r.notes.trim()
+                  ? { notes: r.notes.trim().slice(0, 500) }
+                  : {})
+              };
+            });
+
+          const sanitizedMamas = calculateMamasTotals({
+            title:
+              typeof rawMamas.title === 'string' && rawMamas.title.trim()
+                ? rawMamas.title.trim().slice(0, 120)
+                : "Mama's Personal Savings",
+            bucketLabels: normalizeMamasBucketLabels(rawMamas.bucketLabels),
+            customBuckets: normalizeMamasCustomBuckets(rawMamas.customBuckets),
+            investBalance: 0,
+            mamaAtmBalance: 0,
+            loanToMhariz: 0,
+            totalSavings: 0,
+            records: sanitizedMamasRecords
+          });
+
+          setMamasState(sanitizedMamas);
+          await saveMamasSavingsToFirestore(user.uid, sanitizedMamas);
+          mamasImportedCount = sanitizedMamasRecords.length;
+        }
+
         setIsSyncingFirestore(false);
         setStatusBanner({
           type: 'success',
-          message: `Imported ${parsed.transactions.length} records from ${file.name} and synced to Firebase Firestore.`
+          message:
+            mamasImportedCount > 0
+              ? `Imported ${sanitizedTransactions.length} E-Fund records and ${mamasImportedCount} Mama's Savings records from ${file.name}.`
+              : `Imported ${sanitizedTransactions.length} sanitized records from ${file.name} and synced to Firebase Firestore.`
         });
       } catch (err: any) {
+        setDb(previousDb);
         setIsSyncingFirestore(false);
         setStatusBanner({
           type: 'error',
@@ -1179,14 +1398,6 @@ export default function App() {
           (acc, t) => acc + Math.max(0, t.amountOnHand + t.bpiMoneyMarket + t.bpiShortTerm),
           0
         ),
-    [db]
-  );
-
-  const totalYieldEarned = useMemo(
-    () =>
-      db.transactions
-        .filter((t) => t.category === 'Investment Yield')
-        .reduce((acc, t) => acc + t.amountOnHand + t.bpiMoneyMarket + t.bpiShortTerm, 0),
     [db]
   );
 
@@ -1758,28 +1969,20 @@ export default function App() {
                 {canManage ? (
                   <div className="flex flex-col sm:flex-row sm:items-center gap-2 shrink-0 w-full sm:w-auto">
                     <span className="text-xs font-semibold text-slate-500 sm:mr-1">Quick Log:</span>
-                    <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-1.5 w-full sm:w-auto">
+                    <div className="grid grid-cols-3 sm:flex sm:flex-wrap items-center gap-1.5 w-full sm:w-auto">
                       <button
                         type="button"
-                        onClick={() => openNewEntryModal('loan')}
-                        className="rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-900 hover:bg-amber-100 text-center active:scale-95 transition-all flex items-center justify-center gap-1"
+                        onClick={() => openNewEntryModal('contribution')}
+                        className="rounded-md border border-emerald-300 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-900 hover:bg-emerald-100 text-center active:scale-95 transition-all"
                       >
-                        <HandCoins className="h-3 w-3" />
-                        <span>+ Lend Member</span>
+                        + Contribution
                       </button>
                       <button
                         type="button"
                         onClick={() => openNewEntryModal('loan_repayment')}
-                        className="rounded-md border border-emerald-300 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-900 hover:bg-emerald-100 text-center active:scale-95 transition-all"
-                      >
-                        + Collect Loan
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => openNewEntryModal('contribution', 'Nene')}
                         className="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100 text-center active:scale-95 transition-all"
                       >
-                        + Nene ₱5k
+                        + Collect Loan
                       </button>
                       <button
                         type="button"
@@ -1837,24 +2040,29 @@ export default function App() {
                             <div className="min-w-0">
                               <div className="flex items-center gap-2">
                                 <span className="text-sm font-semibold text-slate-900 truncate">
-                                  {tx.description}
+                                  {pres.displayTitle}
                                 </span>
-                                {tx.highlightAlert && (
-                                  <span className="text-xs font-semibold text-red-600 shrink-0">
-                                    · Priority Medical
-                                  </span>
-                                )}
                               </div>
                               <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
                                 <span className="font-mono tabular-nums">
                                   {formatHumanDate(tx.date)}
                                 </span>
                                 <span aria-hidden="true">·</span>
-                                <span>{tx.category}</span>
-                                <span aria-hidden="true">·</span>
-                                <span className="font-medium text-slate-700">
-                                  {tx.memberOrBeneficiary}
+                                <span
+                                  className={
+                                    tx.highlightAlert ? 'font-medium text-red-600' : undefined
+                                  }
+                                >
+                                  {tx.category}
                                 </span>
+                                {pres.showMemberBadge && (
+                                  <>
+                                    <span aria-hidden="true">·</span>
+                                    <span className="font-medium text-slate-700">
+                                      {tx.memberOrBeneficiary}
+                                    </span>
+                                  </>
+                                )}
                                 <span aria-hidden="true">·</span>
                                 <span>{pres.accountSummaryLabel}</span>
                               </div>
@@ -1897,13 +2105,7 @@ export default function App() {
                       )}
                     </strong>
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => setActiveSection('ledger')}
-                    className="font-semibold text-slate-900 hover:underline"
-                  >
-                    Open Full Activity Ledger →
-                  </button>
+                  <span className="text-slate-400">Prior to Apr 27, 2026</span>
                 </div>
               </div>
 
@@ -2014,13 +2216,6 @@ export default function App() {
                           </button>
                         ))}
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => openNewEntryModal('medical', 'Papa')}
-                        className="font-semibold text-red-700 hover:underline"
-                      >
-                        + Log Medical Expense
-                      </button>
                     </div>
                   )}
                 </div>
@@ -2054,22 +2249,6 @@ export default function App() {
                 </p>
               </div>
               <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 w-full sm:w-auto">
-                {canManage && (
-                  <button
-                    type="button"
-                    disabled={isSyncingFirestore}
-                    onClick={() =>
-                      setConfirmModalState({
-                        isOpen: true,
-                        mode: 'overwrite_firestore_with_default'
-                      })
-                    }
-                    className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-900 hover:bg-emerald-100 transition-colors flex items-center justify-center gap-1.5 w-full sm:w-auto shrink-0"
-                  >
-                    <RefreshCw className={`h-3.5 w-3.5 ${isSyncingFirestore ? 'animate-spin' : ''}`} />
-                    <span>Remigrate All 107 Excel Rows to DB</span>
-                  </button>
-                )}
                 <div className="text-xs text-slate-600 font-mono tabular-nums shrink-0">
                   Total Clan E-Fund:{' '}
                   <strong className="text-emerald-700 font-bold">
@@ -2573,13 +2752,8 @@ export default function App() {
                             <div className="flex items-start justify-between gap-3 md:hidden">
                               <div className="min-w-0">
                                 <div className="text-sm font-bold text-slate-900 leading-snug">
-                                  {tx.description}
+                                  {pres.displayTitle}
                                 </div>
-                                {tx.highlightAlert && (
-                                  <span className="text-xs font-semibold text-red-600 block mt-0.5">
-                                    · Priority Medical
-                                  </span>
-                                )}
                               </div>
                               <div className="text-right shrink-0">
                                 <div
@@ -2608,9 +2782,6 @@ export default function App() {
                               <div className="text-sm font-medium text-slate-900 font-mono tabular-nums">
                                 {formatHumanDate(tx.date)}
                               </div>
-                              <div className="text-xs text-slate-400 font-mono tabular-nums">
-                                Ref #{tx.rowRef || '—'}
-                              </div>
                             </div>
 
                             {/* Desktop Description Column */}
@@ -2621,25 +2792,30 @@ export default function App() {
                             >
                               <div className="flex items-center gap-2">
                                 <span className="text-sm font-semibold text-slate-900 truncate">
-                                  {tx.description}
+                                  {pres.displayTitle}
                                 </span>
-                                {tx.highlightAlert && (
-                                  <span className="text-xs font-semibold text-red-600 shrink-0">
-                                    · Priority Medical
-                                  </span>
-                                )}
                               </div>
                               <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
-                                <span>{tx.category}</span>
-                                <span aria-hidden="true">·</span>
-                                <span className="font-medium text-slate-700">
-                                  {tx.memberOrBeneficiary}
+                                <span
+                                  className={
+                                    tx.highlightAlert ? 'font-medium text-red-600' : undefined
+                                  }
+                                >
+                                  {tx.category}
                                 </span>
-                                {tx.notes && (
+                                {pres.showMemberBadge && (
+                                  <>
+                                    <span aria-hidden="true">·</span>
+                                    <span className="font-medium text-slate-700">
+                                      {tx.memberOrBeneficiary}
+                                    </span>
+                                  </>
+                                )}
+                                {pres.cleanNote && (
                                   <>
                                     <span aria-hidden="true">·</span>
                                     <span className="text-slate-400 truncate max-w-[260px]">
-                                      {tx.notes}
+                                      {pres.cleanNote}
                                     </span>
                                   </>
                                 )}
@@ -2652,16 +2828,26 @@ export default function App() {
                                 {formatHumanDate(tx.date)}
                               </span>
                               <span aria-hidden="true">·</span>
-                              <span>{tx.category}</span>
-                              <span aria-hidden="true">·</span>
-                              <span className="font-medium text-slate-800">
-                                {tx.memberOrBeneficiary}
+                              <span
+                                className={
+                                  tx.highlightAlert ? 'font-medium text-red-600' : undefined
+                                }
+                              >
+                                {tx.category}
                               </span>
-                              {tx.notes && (
+                              {pres.showMemberBadge && (
+                                <>
+                                  <span aria-hidden="true">·</span>
+                                  <span className="font-medium text-slate-800">
+                                    {tx.memberOrBeneficiary}
+                                  </span>
+                                </>
+                              )}
+                              {pres.cleanNote && (
                                 <>
                                   <span aria-hidden="true">·</span>
                                   <span className="text-slate-400 truncate max-w-[200px]">
-                                    {tx.notes}
+                                    {pres.cleanNote}
                                   </span>
                                 </>
                               )}
@@ -2741,7 +2927,6 @@ export default function App() {
                                   onClick={() =>
                                     setConfirmModalState({
                                       isOpen: true,
-                                      mode: 'delete_row',
                                       targetRow: tx
                                     })
                                   }
@@ -2871,15 +3056,6 @@ export default function App() {
                   Member contribution cards and 2026 monthly consistency tracker
                 </p>
               </div>
-              {canManage && (
-                <button
-                  type="button"
-                  onClick={() => openNewEntryModal('contribution')}
-                  className="px-4 py-2 text-xs font-semibold text-white bg-slate-900 rounded-lg hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0 self-start"
-                >
-                  + Log Member Contribution
-                </button>
-              )}
             </div>
 
             {/* Member Profile Summary Cards */}
@@ -3144,28 +3320,35 @@ export default function App() {
                         <div className="min-w-0">
                           <div className="flex items-center gap-2">
                             <span className="text-sm font-bold text-slate-900 leading-snug">
-                              {row.description}
+                              {pres.displayTitle}
                             </span>
-                            {row.highlightAlert && (
-                              <span className="text-xs font-semibold text-red-600 shrink-0">
-                                · Priority Medical
-                              </span>
-                            )}
                           </div>
                           <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500 mt-1">
                             <span className="font-mono tabular-nums">{formatHumanDate(row.date)}</span>
                             <span aria-hidden="true">·</span>
-                            <span>{row.category}</span>
-                            <span aria-hidden="true">·</span>
-                            <span className="font-medium text-slate-700">
-                              {row.memberOrBeneficiary}
+                            <span
+                              className={
+                                row.highlightAlert ? 'font-medium text-red-600' : undefined
+                              }
+                            >
+                              {row.category}
                             </span>
-                            <span aria-hidden="true">·</span>
-                            <span>{pres.accountSummaryLabel}</span>
-                            {row.notes && (
+                            {pres.showMemberBadge && (
                               <>
                                 <span aria-hidden="true">·</span>
-                                <span className="text-slate-400 truncate max-w-[200px]">{row.notes}</span>
+                                <span className="font-medium text-slate-700">
+                                  {row.memberOrBeneficiary}
+                                </span>
+                              </>
+                            )}
+                            <span aria-hidden="true">·</span>
+                            <span>{pres.accountSummaryLabel}</span>
+                            {pres.cleanNote && (
+                              <>
+                                <span aria-hidden="true">·</span>
+                                <span className="text-slate-400 truncate max-w-[200px]">
+                                  {pres.cleanNote}
+                                </span>
                               </>
                             )}
                           </div>
@@ -3204,7 +3387,6 @@ export default function App() {
                             onClick={() =>
                               setConfirmModalState({
                                 isOpen: true,
-                                mode: 'delete_row',
                                 targetRow: row
                               })
                             }
@@ -3273,7 +3455,7 @@ export default function App() {
                     >
                       <div>
                         <div className="text-sm font-semibold text-slate-900">
-                          {row.description}
+                          {pres.displayTitle}
                         </div>
                         <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500 mt-0.5">
                           <span className="font-mono tabular-nums">
@@ -3281,10 +3463,10 @@ export default function App() {
                           </span>
                           <span aria-hidden="true">·</span>
                           <span>{pres.accountSummaryLabel}</span>
-                          {row.notes && (
+                          {pres.cleanNote && (
                             <>
                               <span aria-hidden="true">·</span>
-                              <span>{row.notes}</span>
+                              <span>{pres.cleanNote}</span>
                             </>
                           )}
                         </div>
@@ -3321,7 +3503,6 @@ export default function App() {
                               onClick={() =>
                                 setConfirmModalState({
                                   isOpen: true,
-                                  mode: 'delete_row',
                                   targetRow: row
                                 })
                               }
@@ -3361,14 +3542,7 @@ export default function App() {
             userEmail={user?.email}
             isSyncing={isSyncingFirestore}
             onGoogleSignIn={handleGoogleLogin}
-            onOpenResetConfirmModal={() =>
-              setConfirmModalState({
-                isOpen: true,
-                mode: 'overwrite_firestore_with_default'
-              })
-            }
             onDownloadJson={handleDownloadJson}
-            onDownloadCsv={handleDownloadCsv}
             onImportJsonFile={handleImportJsonFile}
             onReturnToDashboard={() => setActiveSection('dashboard')}
           />
@@ -3515,17 +3689,13 @@ export default function App() {
         />
       )}
 
-      {/* Confirmation Modal for Firestore Reset & Row Deletions (Admin-only) */}
+      {/* Confirmation Modal for Row Deletions (Admin-only) */}
       {canManage && (
         <DriveConfirmModal
           isOpen={confirmModalState.isOpen}
-          mode={confirmModalState.mode}
           onClose={() => setConfirmModalState((prev) => ({ ...prev, isOpen: false }))}
           onConfirm={handleExecuteConfirmedAction}
           isSubmitting={isSyncingFirestore}
-          db={
-            confirmModalState.mode === 'overwrite_firestore_with_default' ? INITIAL_EFUND_DB : db
-          }
           targetRowDescription={confirmModalState.targetRow?.description}
           targetRowDate={confirmModalState.targetRow?.displayDate}
         />

@@ -39,6 +39,7 @@ import {
   MAMAS_SAVINGS_DOC_ID,
   SHARED_LEDGER_ID,
   authorizeGoogleDriveAccess,
+  clearCachedAccessToken,
   getAccessToken,
   normalizeMamasBucketLabels,
   normalizeMamasCustomBuckets
@@ -48,6 +49,7 @@ import {
   createGoogleSheetsBackupInDrive,
   listGoogleDriveBackups,
   overwriteExistingGoogleSheetBackup,
+  safeGoogleDriveUrl,
   uploadJsonBackupToGoogleDrive
 } from '../services/googleDriveBackup';
 import {
@@ -64,9 +66,7 @@ interface DatabaseManagementViewProps {
   userEmail?: string | null;
   isSyncing: boolean;
   onGoogleSignIn: () => void;
-  onOpenResetConfirmModal: () => void;
   onDownloadJson: () => void;
-  onDownloadCsv: () => void;
   onImportJsonFile: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onReturnToDashboard: () => void;
 }
@@ -80,9 +80,7 @@ export const DatabaseManagementView: React.FC<DatabaseManagementViewProps> = ({
   userEmail,
   isSyncing,
   onGoogleSignIn,
-  onOpenResetConfirmModal,
   onDownloadJson,
-  onDownloadCsv,
   onImportJsonFile,
   onReturnToDashboard
 }) => {
@@ -153,6 +151,20 @@ export const DatabaseManagementView: React.FC<DatabaseManagementViewProps> = ({
     return token;
   };
 
+  const handleDriveApiError = (err: unknown, fallbackMessage: string) => {
+    const message = err instanceof Error ? err.message : fallbackMessage;
+    if (message.includes('(401)') || /UNAUTHENTICATED|Invalid Credentials/i.test(message)) {
+      clearCachedAccessToken();
+      setDriveAccessToken(null);
+      setDriveErrorMsg(
+        'Your Google Drive session token expired. Click the backup button again to re-authorize.'
+      );
+    } else {
+      setDriveErrorMsg(message);
+    }
+    setDriveStatusMsg(null);
+  };
+
   const handleRefreshDriveBackups = async (explicitToken?: string) => {
     const token = explicitToken || (await ensureDriveToken());
     if (!token) return;
@@ -161,10 +173,8 @@ export const DatabaseManagementView: React.FC<DatabaseManagementViewProps> = ({
     try {
       const files = await listGoogleDriveBackups(token);
       setDriveFiles(files);
-    } catch (err: any) {
-      setDriveErrorMsg(
-        err instanceof Error ? err.message : 'Failed to list Google Drive backups.'
-      );
+    } catch (err: unknown) {
+      handleDriveApiError(err, 'Failed to list Google Drive backups.');
     } finally {
       setIsDriveLoading(false);
     }
@@ -199,11 +209,8 @@ export const DatabaseManagementView: React.FC<DatabaseManagementViewProps> = ({
       setDriveStatusMsg(`Backed up to Google Sheets: "${res.title}"`);
       const files = await listGoogleDriveBackups(token);
       setDriveFiles(files);
-    } catch (err: any) {
-      setDriveErrorMsg(
-        err instanceof Error ? err.message : 'Failed to create Google Sheet backup.'
-      );
-      setDriveStatusMsg(null);
+    } catch (err: unknown) {
+      handleDriveApiError(err, 'Failed to create Google Sheet backup.');
     } finally {
       setIsDriveLoading(false);
     }
@@ -225,11 +232,8 @@ export const DatabaseManagementView: React.FC<DatabaseManagementViewProps> = ({
       setDriveStatusMsg(`Uploaded JSON backup to Google Drive: "${res.fileName}"`);
       const files = await listGoogleDriveBackups(token);
       setDriveFiles(files);
-    } catch (err: any) {
-      setDriveErrorMsg(
-        err instanceof Error ? err.message : 'Failed to upload JSON backup to Google Drive.'
-      );
-      setDriveStatusMsg(null);
+    } catch (err: unknown) {
+      handleDriveApiError(err, 'Failed to upload JSON backup to Google Drive.');
     } finally {
       setIsDriveLoading(false);
     }
@@ -260,11 +264,8 @@ export const DatabaseManagementView: React.FC<DatabaseManagementViewProps> = ({
       setDriveStatusMsg(`Updated existing Google Sheet backup: "${target.name}"`);
       const files = await listGoogleDriveBackups(token);
       setDriveFiles(files);
-    } catch (err: any) {
-      setDriveErrorMsg(
-        err instanceof Error ? err.message : 'Failed to overwrite existing Google Sheet.'
-      );
-      setDriveStatusMsg(null);
+    } catch (err: unknown) {
+      handleDriveApiError(err, 'Failed to overwrite existing Google Sheet.');
     } finally {
       setIsDriveLoading(false);
     }
@@ -556,32 +557,14 @@ export const DatabaseManagementView: React.FC<DatabaseManagementViewProps> = ({
             <div>
               <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
                 <HardDrive className="h-4 w-4 text-emerald-700" />
-                <span>Database Sync &amp; Remigration Tools</span>
+                <span>Database Backup &amp; Restore Tools</span>
               </h3>
               <p className="text-xs text-slate-500 mt-0.5">
-                Execute master database operations, backup downloads, or re-seed from the master Excel file.
+                Download JSON backup snapshots or restore data from a backup file.
               </p>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 pt-1">
-              {/* Remigrate Master Spreadsheet Button */}
-              <button
-                type="button"
-                onClick={onOpenResetConfirmModal}
-                className="flex flex-col text-left p-4 rounded-lg border border-emerald-300 bg-emerald-50/70 hover:bg-emerald-100/80 transition-all group"
-              >
-                <div className="flex items-center justify-between w-full text-emerald-950 font-bold text-xs">
-                  <span className="flex items-center gap-1.5">
-                    <RefreshCw className="h-4 w-4 text-emerald-700 group-hover:rotate-180 transition-transform duration-500" />
-                    <span>Reset &amp; Remigrate Clan E-Fund</span>
-                  </span>
-                  <ArrowRight className="h-3.5 w-3.5 text-emerald-700" />
-                </div>
-                <p className="text-[11px] text-emerald-800/90 mt-2 leading-relaxed">
-                  Resets the shared Clan E-Fund ledger in Firestore to the master 107 spreadsheet records (₱96,770.00).
-                </p>
-              </button>
-
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
               {/* Download JSON Backup */}
               <button
                 type="button"
@@ -689,18 +672,53 @@ export const DatabaseManagementView: React.FC<DatabaseManagementViewProps> = ({
 
             {/* Status / Error Banner */}
             {driveErrorMsg && (
-              <div className="rounded-lg border border-red-200 bg-red-50 px-3.5 py-2.5 text-xs text-red-800 flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <AlertCircle className="h-4 w-4 text-red-600 shrink-0" />
-                  <span>{driveErrorMsg}</span>
+              <div className="rounded-lg border border-red-200 bg-red-50 px-3.5 py-3 text-xs text-red-800 space-y-2.5">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-start gap-2">
+                    <AlertCircle className="h-4 w-4 text-red-600 shrink-0 mt-0.5" />
+                    <span className="leading-relaxed break-words">{driveErrorMsg}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setDriveErrorMsg(null)}
+                    className="text-[11px] font-semibold underline shrink-0"
+                  >
+                    Dismiss
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setDriveErrorMsg(null)}
-                  className="text-[11px] font-semibold underline"
-                >
-                  Dismiss
-                </button>
+
+                {(driveErrorMsg.includes('has not been used in project') ||
+                  driveErrorMsg.includes('is disabled') ||
+                  driveErrorMsg.includes('apis/api/')) && (
+                  <div className="rounded-md border border-red-200 bg-white p-2.5 text-slate-700 space-y-2">
+                    <p className="text-[11px] font-medium text-slate-800">
+                      One-time Google Cloud project setup required for{' '}
+                      <span className="font-mono font-bold">clan-e-fund-ledger</span> (Project{' '}
+                      <span className="font-mono font-bold">305671424873</span>): click below to
+                      enable both APIs, wait ~30 seconds, then try your backup again.
+                    </p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <a
+                        href="https://console.developers.google.com/apis/api/drive.googleapis.com/overview?project=305671424873"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 rounded-md bg-emerald-800 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-emerald-900 transition-colors"
+                      >
+                        <span>1. Enable Google Drive API</span>
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
+                      <a
+                        href="https://console.developers.google.com/apis/api/sheets.googleapis.com/overview?project=305671424873"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 rounded-md border border-emerald-700 bg-emerald-50 px-3 py-1.5 text-[11px] font-semibold text-emerald-900 hover:bg-emerald-100 transition-colors"
+                      >
+                        <span>2. Enable Google Sheets API</span>
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -779,11 +797,13 @@ export const DatabaseManagementView: React.FC<DatabaseManagementViewProps> = ({
                     const formattedDate = file.modifiedTime
                       ? new Date(file.modifiedTime).toLocaleString()
                       : '';
-                    const fileUrl =
-                      file.webViewLink ||
-                      (isSheet
-                        ? `https://docs.google.com/spreadsheets/d/${file.id}/edit`
-                        : `https://drive.google.com/file/d/${file.id}/view`);
+                    const encodedId = encodeURIComponent(file.id);
+                    const fileUrl = safeGoogleDriveUrl(
+                      file.webViewLink,
+                      isSheet
+                        ? `https://docs.google.com/spreadsheets/d/${encodedId}/edit`
+                        : `https://drive.google.com/file/d/${encodedId}/view`
+                    );
                     return (
                       <div
                         key={file.id}
@@ -1144,7 +1164,7 @@ export const DatabaseManagementView: React.FC<DatabaseManagementViewProps> = ({
 
           <div className="overflow-hidden rounded-lg border border-slate-200 bg-slate-100 p-2">
             <img
-              src="/assets/aistudio/image_898f47ed.png"
+              src="./assets/aistudio/image_898f47ed.png"
               alt="Original Clan E-Fund record showing Date, Description, Amount on Hand, BPI Money Market Fund, and BPI Short Term columns"
               referrerPolicy="no-referrer"
               className="mx-auto max-h-[560px] w-auto object-contain rounded"

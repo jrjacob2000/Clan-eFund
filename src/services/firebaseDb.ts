@@ -92,10 +92,13 @@ export const ACTIVE_FIREBASE_ENV: 'aistudio-dev' | 'production' = isAiStudioDevE
   ? 'aistudio-dev'
   : 'production';
 
+export const SHARED_LEDGER_ID = 'clan-efund-main';
+export const MAMAS_SAVINGS_DOC_ID = 'state';
+
 export const ACTIVE_FIREBASE_ENV_LABEL =
   ACTIVE_FIREBASE_ENV === 'aistudio-dev'
-    ? `AI Studio Dev Firebase (${firebaseConfig.projectId})`
-    : `Production Firebase (${PRODUCTION_FIREBASE_CONFIG.projectId})`;
+    ? `AI Studio Dev Database (clanefund-dev)`
+    : `Production Live Database (${DEFAULT_FIRESTORE_DB_ID})`;
 
 const rawAppletDbId = String(
   (firebaseConfig as { firestoreDatabaseId?: string }).firestoreDatabaseId || ''
@@ -122,7 +125,6 @@ export const EXPORT_JSON_FILENAME = 'clan-efund-ledger.json';
 export const FIREBASE_PROJECT_ID = activeFirebaseConfig.projectId;
 export const FIRESTORE_DATABASE_ID =
   activeFirebaseConfig.firestoreDatabaseId || DEFAULT_FIRESTORE_DB_ID;
-export const SHARED_LEDGER_ID = 'clan-efund-main';
 export const ADMIN_EMAIL = 'jrjacob2000@gmail.com';
 export const MAMAS_SAVINGS_CACHE_KEY = 'mamas_savings_working_copy_v7';
 
@@ -350,6 +352,10 @@ export async function getAccessToken(): Promise<string | null> {
   return cachedAccessToken;
 }
 
+export function clearCachedAccessToken(): void {
+  cachedAccessToken = null;
+}
+
 export async function googleSignIn(): Promise<User | null> {
   // Standard Firebase Google Sign-In uses only non-sensitive profile/email scopes
   // so login is never blocked by Google Workspace OAuth verification checks.
@@ -438,7 +444,6 @@ export async function ensureSharedLedgerInitializedInFirestore(
   }
 
   if (snap && snap.exists()) {
-    const existingData = snap.data();
     // Verify that the full 107-row Excel migration (starting at row-4, 2024-01-27) is present
     const firstExcelRowRef = doc(db, 'ledgers', SHARED_LEDGER_ID, 'transactions', 'row-4');
     let firstRowSnap;
@@ -461,10 +466,11 @@ export async function ensureSharedLedgerInitializedInFirestore(
       existingTxCount = 0;
     }
 
+    // Only auto-seed if the database is truly empty or still holds the legacy <=25-row pre-Excel seed.
+    // Never overwrite a populated ledger (>25 rows) even if the admin intentionally deleted row-4.
     const needsFullExcelMigration =
-      existingTxCount <= 25 ||
-      !firstRowSnap ||
-      !firstRowSnap.exists();
+      existingTxCount === 0 ||
+      (existingTxCount <= 25 && (!firstRowSnap || !firstRowSnap.exists()));
 
     if (needsFullExcelMigration) {
       await replaceEntireLedgerInFirestore(adminUid, INITIAL_EFUND_DB);
@@ -913,7 +919,7 @@ export async function replaceEntireLedgerInFirestore(
   }
 }
 
-export const MAMAS_SAVINGS_DOC_ID = 'state';
+
 
 export function normalizeMamasBucketLabels(raw?: Partial<MamasBucketLabels>): MamasBucketLabels {
   const rawInvest = (raw?.investLabel || '').trim();
@@ -979,14 +985,14 @@ export async function saveMamasSavingsToFirestore(
   try {
     await setDoc(docRef, {
       ownerId: adminUid,
-      title: state.title || "Mama's Savings",
+      title: (state.title || "Mama's Savings").trim().slice(0, 120) || "Mama's Savings",
       investBalance: clampNumber(state.investBalance, -100000000, 100000000),
       mamaAtmBalance: clampNumber(state.mamaAtmBalance, -100000000, 100000000),
       loanToMhariz: clampNumber(state.loanToMhariz, -100000000, 100000000),
       totalSavings: clampNumber(state.totalSavings, -100000000, 100000000),
       bucketLabels,
       customBuckets,
-      records: state.records.map((r, i) => ({
+      records: state.records.slice(0, 2000).map((r, i) => ({
         id: String(r.id || `mamas-row-${r.rowRef ?? i + 1}-${r.date}`).slice(0, 64),
         rowRef: r.rowRef ?? i + 1,
         date: r.date,

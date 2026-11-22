@@ -3,7 +3,7 @@
   "appId": "1:305671424873:web:b94031de7130447adb4bf8",
   "apiKey": "AIzaSyCX1r8h1nVjZYdSo5Nv32Bt6xJXrF7RI2c",
   "authDomain": "clan-e-fund-ledger.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-clanefundledger-9007d667-4fc7-4cb4-b6d8-b403e74ca30a",
+  "firestoreDatabaseId": "clanefund-dev",
   "storageBucket": "clan-e-fund-ledger.firebasestorage.app",
   "messagingSenderId": "305671424873",
   "measurementId": "",

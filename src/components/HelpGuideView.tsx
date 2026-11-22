@@ -2,23 +2,16 @@ import React, { useState } from 'react';
 import {
   HelpCircle,
   BookOpen,
-  ShieldCheck,
-  Lock,
-  PiggyBank,
   HeartPulse,
   ReceiptText,
   Plus,
-  RefreshCw,
-  Download,
   Users,
   Search,
   ChevronDown,
   ChevronUp,
-  DollarSign,
   ArrowRight,
   Database,
   CheckCircle2,
-  FileSpreadsheet,
   Info
 } from 'lucide-react';
 import { ADMIN_EMAIL } from '../services/firebaseDb';
