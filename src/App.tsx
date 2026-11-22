@@ -2,16 +2,12 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { User } from 'firebase/auth';
 import {
   Plus,
-  Search,
   Download,
   Database,
   Pencil,
   Trash2,
-  SlidersHorizontal,
   CheckCircle2,
   AlertCircle,
-  ArrowUpDown,
-  ArrowRight,
   ShieldCheck,
   LayoutDashboard,
   ReceiptText,
@@ -66,20 +62,16 @@ import { MamasSavingsView } from './components/MamasSavingsView';
 import { DatabaseManagementView } from './components/DatabaseManagementView';
 import { HelpGuideView } from './components/HelpGuideView';
 import { PaginationBar } from './components/PaginationBar';
+import {
+  ActivityAccountFilter,
+  ActivityFilterTab,
+  ActivityLedgerView
+} from './components/ActivityLedgerView';
 
 export type ActiveAccount = 'clan_efund' | 'mamas_savings';
 type ActiveSection = 'dashboard' | 'ledger' | 'contributors' | 'medical' | 'database' | 'help';
-type FilterTab =
-  | 'all'
-  | 'Contribution'
-  | 'Medical Disbursement'
-  | 'Internal Transfer'
-  | 'Reimbursement'
-  | 'Investment Yield'
-  | 'Member Loan'
-  | 'Loan Repayment';
-
-type AccountFilter = 'ALL' | 'amountOnHand' | 'bpiMoneyMarket' | 'bpiShortTerm' | 'memberLoan';
+type FilterTab = ActivityFilterTab;
+type AccountFilter = ActivityAccountFilter;
 
 const LOCAL_STORAGE_CACHE_KEY = `clan_efund_working_copy_v6_${FIRESTORE_DATABASE_ID}`;
 const MAX_IMPORT_JSON_BYTES = 5 * 1024 * 1024; // 5 MB safety limit
@@ -173,17 +165,6 @@ function formatHumanDate(isoDate: string): string {
   });
 }
 
-function getMonthHeaderLabel(isoDate: string): string {
-  const parts = isoDate.split('-');
-  if (parts.length < 2) return 'Earlier';
-  const dateObj = new Date(Number(parts[0]), Number(parts[1]) - 1, 1);
-  if (isNaN(dateObj.getTime())) return isoDate;
-  return dateObj.toLocaleDateString('en-US', {
-    month: 'long',
-    year: 'numeric'
-  });
-}
-
 /**
  * Resolves the primary amount, direction, account routing, and de-duplicated
  * row labels for a transaction so row subtitles don't repeat the title/member/category.
@@ -254,11 +235,18 @@ function resolveTransactionPresentation(tx: EFundTransaction): {
 
   if (tx.category === 'Loan Repayment' || memberLoan < 0) {
     let targetLabel = 'Cash on Hand';
-    if (bpiMoneyMarket > 0) targetLabel = 'Money Market Fund';
-    else if (bpiShortTerm > 0) targetLabel = 'Short Term Fund';
+    if (bpiMoneyMarket > 0 && bpiShortTerm > 0) {
+      targetLabel = 'Money Market & Short Term';
+    } else if (bpiMoneyMarket > 0) {
+      targetLabel = 'Money Market Fund';
+    } else if (bpiShortTerm > 0) {
+      targetLabel = 'Short Term Fund';
+    }
     return {
       ...base,
-      primaryAmount: Math.abs(memberLoan || amountOnHand),
+      primaryAmount: Math.abs(
+        memberLoan || amountOnHand + bpiMoneyMarket + bpiShortTerm
+      ),
       isInternalTransfer: false,
       fromAccountLabel: 'Member Loan (Receivable)',
       toAccountLabel: targetLabel,
@@ -340,9 +328,36 @@ export default function App() {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (parsed && Array.isArray(parsed.transactions) && parsed.transactions.length > 25) {
+          const normalizedTxs = parsed.transactions.map((t: EFundTransaction) => {
+            const descLower = String(t.description || '').toLowerCase();
+            if (
+              (t.id === 'row-36' || descLower.includes('hiram ni dondon')) &&
+              t.category === 'Medical Disbursement'
+            ) {
+              return {
+                ...t,
+                category: 'Member Loan' as EntryCategory,
+                memberLoan: Math.abs(t.amountOnHand + t.bpiMoneyMarket + t.bpiShortTerm),
+                highlightAlert: false
+              };
+            }
+            if (
+              (t.id === 'row-43' || t.id === 'row-90' || t.id === 'row-109') &&
+              t.category === 'Reimbursement'
+            ) {
+              return {
+                ...t,
+                category: 'Loan Repayment' as EntryCategory,
+                memberLoan: -Math.abs(t.amountOnHand + t.bpiMoneyMarket + t.bpiShortTerm),
+                highlightAlert: false
+              };
+            }
+            return t;
+          });
           return {
             ...INITIAL_EFUND_DB,
-            ...parsed
+            ...parsed,
+            transactions: normalizedTxs
           };
         }
       }
@@ -361,7 +376,6 @@ export default function App() {
   const [monthFilter, setMonthFilter] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [sortOrder, setSortOrder] = useState<'newest_desc' | 'oldest_asc'>('newest_desc');
-  const [groupByMonth, setGroupByMonth] = useState<boolean>(true);
   const [showPriorBalanceConfig, setShowPriorBalanceConfig] = useState<boolean>(false);
   const [selectedMatrixYear, setSelectedMatrixYear] = useState<MatrixYear>('2026');
 
@@ -1150,7 +1164,22 @@ export default function App() {
 
   const filteredRows = useMemo(() => {
     const matches = rowsWithRunningTotals.filter((tx) => {
-      if (filterTab !== 'all' && tx.category !== filterTab) return false;
+      if (filterTab === 'money_in') {
+        if (
+          tx.category !== 'Contribution' &&
+          tx.category !== 'Reimbursement' &&
+          tx.category !== 'Investment Yield' &&
+          tx.category !== 'Loan Repayment'
+        ) {
+          return false;
+        }
+      } else if (filterTab === 'loans') {
+        if (tx.category !== 'Member Loan' && tx.category !== 'Loan Repayment') {
+          return false;
+        }
+      } else if (filterTab !== 'all' && tx.category !== filterTab) {
+        return false;
+      }
       if (memberFilter !== 'ALL' && tx.memberOrBeneficiary !== memberFilter) return false;
       if (accountFilter === 'amountOnHand' && tx.amountOnHand === 0) return false;
       if (accountFilter === 'bpiMoneyMarket' && tx.bpiMoneyMarket === 0) return false;
@@ -1190,10 +1219,24 @@ export default function App() {
     let outflows = 0;
     let net = 0;
     for (const tx of filteredRows) {
-      const delta = tx.amountOnHand + tx.bpiMoneyMarket + tx.bpiShortTerm + (tx.memberLoan || 0);
-      if (delta > 0) inflows += delta;
-      if (delta < 0) outflows += Math.abs(delta);
-      net += delta;
+      const cashAndBankDelta = tx.amountOnHand + tx.bpiMoneyMarket + tx.bpiShortTerm;
+      if (tx.category === 'Internal Transfer') {
+        continue;
+      }
+      if (tx.category === 'Member Loan') {
+        const lent = Math.abs(tx.memberLoan || cashAndBankDelta);
+        outflows += lent;
+        net -= lent;
+      } else if (tx.category === 'Loan Repayment') {
+        const repaid = Math.abs(tx.memberLoan || cashAndBankDelta);
+        inflows += repaid;
+        net += repaid;
+      } else {
+        const delta = cashAndBankDelta + (tx.memberLoan || 0);
+        if (delta > 0) inflows += delta;
+        if (delta < 0) outflows += Math.abs(delta);
+        net += delta;
+      }
     }
     return { inflows, outflows, net, count: filteredRows.length };
   }, [filteredRows]);
@@ -1218,35 +1261,6 @@ export default function App() {
     const start = (safePage - 1) * ledgerPageSize;
     return filteredRows.slice(start, start + ledgerPageSize);
   }, [filteredRows, ledgerPage, ledgerPageSize]);
-
-  // Group paginated rows by month for clean modern ledger sections
-  const groupedTransactions = useMemo(() => {
-    const groups: {
-      monthKey: string;
-      monthLabel: string;
-      netChange: number;
-      items: typeof paginatedLedgerRows;
-    }[] = [];
-
-    for (const row of paginatedLedgerRows) {
-      const mKey = row.date.slice(0, 7);
-      const lastGroup = groups[groups.length - 1];
-      const rowNet = row.amountOnHand + row.bpiMoneyMarket + row.bpiShortTerm + (row.memberLoan || 0);
-
-      if (!lastGroup || lastGroup.monthKey !== mKey) {
-        groups.push({
-          monthKey: mKey,
-          monthLabel: getMonthHeaderLabel(row.date),
-          netChange: rowNet,
-          items: [row]
-        });
-      } else {
-        lastGroup.items.push(row);
-        lastGroup.netChange += rowNet;
-      }
-    }
-    return groups;
-  }, [paginatedLedgerRows]);
 
   // Contributor summaries
   const contributorStats = useMemo(() => {
@@ -1278,7 +1292,7 @@ export default function App() {
     }
 
     for (const tx of db.transactions) {
-      if (tx.category === 'Contribution' || tx.category === 'Reimbursement') {
+      if (tx.category === 'Contribution') {
         const key = tx.memberOrBeneficiary;
         const current = map.get(key) || {
           member: key,
@@ -1739,12 +1753,16 @@ export default function App() {
                   <span className="text-xs text-slate-400">{db.members.length} members →</span>
                 </div>
                 <div className="mt-2 text-2xl font-bold font-mono tabular-nums text-slate-900">
-                  +{formatPHP(totalContributionsOnly + totalReimbursements)}
+                  +{formatPHP(totalContributionsOnly)}
                 </div>
                 <div className="mt-1.5 flex items-center gap-1.5 text-xs text-slate-500">
-                  <span>{formatPHP(totalContributionsOnly)} contributions</span>
-                  <span aria-hidden="true">·</span>
-                  <span>+{formatPHP(priorTotalForward)} prior bal</span>
+                  <span>{contributorStats.length} active contributors</span>
+                  {priorTotalForward > 0 && (
+                    <>
+                      <span aria-hidden="true">·</span>
+                      <span>+{formatPHP(priorTotalForward)} prior bal</span>
+                    </>
+                  )}
                 </div>
               </button>
 
@@ -2073,6 +2091,8 @@ export default function App() {
                                 className={`text-sm font-bold font-mono tabular-nums whitespace-nowrap ${
                                   pres.isInternalTransfer
                                     ? 'text-slate-800'
+                                    : tx.category === 'Member Loan'
+                                    ? 'text-amber-800'
                                     : pres.primaryAmount > 0
                                     ? 'text-emerald-700'
                                     : 'text-red-600'
@@ -2080,6 +2100,8 @@ export default function App() {
                               >
                                 {pres.isInternalTransfer
                                   ? `${formatPHP(pres.primaryAmount)} Transfer`
+                                  : tx.category === 'Member Loan'
+                                  ? `${formatPHP(pres.primaryAmount)} Lent`
                                   : pres.primaryAmount > 0
                                   ? `+${formatPHP(pres.primaryAmount)}`
                                   : formatPHP(pres.primaryAmount)}
@@ -2226,822 +2248,54 @@ export default function App() {
 
         {/* SECTION 1: MODERN TREASURY ACTIVITY STREAM (NO SPREADSHEET CLUTTER) */}
         {activeSection === 'ledger' && (
-          <section className="space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-              <div>
-                <h1 className="text-xl font-bold text-slate-900">Activity Ledger</h1>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Chronological record of contributions, medical disbursements, and fund transfers
-                  {accountFilter !== 'ALL' && (
-                    <>
-                      {' '}
-                      · Filtered by account (
-                      <button
-                        type="button"
-                        onClick={() => setAccountFilter('ALL')}
-                        className="font-semibold text-slate-900 underline"
-                      >
-                        Show all accounts
-                      </button>
-                      )
-                    </>
-                  )}
-                </p>
-              </div>
-              <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 w-full sm:w-auto">
-                <div className="text-xs text-slate-600 font-mono tabular-nums shrink-0">
-                  Total Clan E-Fund:{' '}
-                  <strong className="text-emerald-700 font-bold">
-                    {formatPHP(totals.totalFund)}
-                  </strong>
-                </div>
-              </div>
-            </div>
-
-            {/* Account Bucket Quick Filter Strip */}
-            <div className="w-full min-w-0 max-w-full overflow-x-auto pb-1.5 touch-pan-x no-scrollbar">
-              <div className="inline-flex items-center gap-1.5 text-xs min-w-max">
-                <span className="text-slate-500 font-semibold shrink-0 mr-1">Account Bucket:</span>
-                <button
-                  type="button"
-                  onClick={() => setAccountFilter('ALL')}
-                  className={`px-3 py-1.5 rounded-md border text-xs font-semibold transition-colors shrink-0 ${
-                    accountFilter === 'ALL'
-                      ? 'border-slate-900 bg-slate-900 text-white shadow-xs'
-                      : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
-                  }`}
-                >
-                  All Accounts ({formatPHP(totals.totalFund)})
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setAccountFilter('amountOnHand')}
-                  className={`px-3 py-1.5 rounded-md border text-xs font-semibold transition-colors shrink-0 ${
-                    accountFilter === 'amountOnHand'
-                      ? 'border-slate-900 bg-slate-900 text-white shadow-xs'
-                      : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
-                  }`}
-                >
-                  Cash on Hand ({formatPHP(totals.amountOnHand)})
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setAccountFilter('bpiMoneyMarket')}
-                  className={`px-3 py-1.5 rounded-md border text-xs font-semibold transition-colors shrink-0 ${
-                    accountFilter === 'bpiMoneyMarket'
-                      ? 'border-slate-900 bg-slate-900 text-white shadow-xs'
-                      : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
-                  }`}
-                >
-                  Money Market ({formatPHP(totals.bpiMoneyMarket)})
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setAccountFilter('bpiShortTerm')}
-                  className={`px-3 py-1.5 rounded-md border text-xs font-semibold transition-colors shrink-0 ${
-                    accountFilter === 'bpiShortTerm'
-                      ? 'border-slate-900 bg-slate-900 text-white shadow-xs'
-                      : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
-                  }`}
-                >
-                  Short Term ({formatPHP(totals.bpiShortTerm)})
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setAccountFilter('memberLoan')}
-                  className={`px-3 py-1.5 rounded-md border text-xs font-semibold transition-colors shrink-0 flex items-center gap-1.5 ${
-                    accountFilter === 'memberLoan'
-                      ? 'border-amber-700 bg-amber-700 text-white shadow-xs'
-                      : 'border-amber-200 bg-amber-50 text-amber-900 hover:bg-amber-100'
-                  }`}
-                >
-                  <HandCoins className="h-3.5 w-3.5" />
-                  <span>Member Loans ({formatPHP(totals.memberLoan)})</span>
-                </button>
-              </div>
-            </div>
-
-            {/* Year & Month Filter Bar */}
-            <div className="rounded-lg border border-slate-200 bg-white p-3.5 sm:p-4 space-y-3 min-w-0 max-w-full">
-              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 min-w-0">
-                {/* Year Filter Strip */}
-                <div className="w-full min-w-0 max-w-full overflow-x-auto pb-1 touch-pan-x no-scrollbar">
-                  <div className="inline-flex items-center gap-1.5 min-w-max">
-                    <span className="text-xs font-semibold text-slate-500 shrink-0 mr-1">Year:</span>
-                    <button
-                      type="button"
-                      onClick={() => setYearFilter('ALL')}
-                      className={`px-3 py-1.5 rounded-md border text-xs font-semibold transition-colors shrink-0 ${
-                        yearFilter === 'ALL'
-                          ? 'border-slate-900 bg-slate-900 text-white shadow-xs'
-                          : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'
-                      }`}
-                    >
-                      All Years ({db.transactions.length})
-                    </button>
-                    {availableYears.map((yr) => (
-                      <button
-                        key={yr}
-                        type="button"
-                        onClick={() => setYearFilter(yr)}
-                        className={`px-3 py-1.5 rounded-md border text-xs font-semibold font-mono tabular-nums transition-colors shrink-0 ${
-                          yearFilter === yr
-                            ? 'border-slate-900 bg-slate-900 text-white shadow-xs'
-                            : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'
-                        }`}
-                      >
-                        {yr} ({yearRowCounts[yr] || 0})
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Month Filter Strip */}
-                <div className="w-full min-w-0 max-w-full overflow-x-auto pb-1 touch-pan-x no-scrollbar">
-                  <div className="inline-flex items-center gap-1 min-w-max">
-                    <span className="text-xs font-semibold text-slate-500 shrink-0 mr-1">Month:</span>
-                    {LEDGER_MONTH_OPTIONS.map((m) => (
-                      <button
-                        key={m.value}
-                        type="button"
-                        onClick={() => setMonthFilter(m.value)}
-                        className={`px-2.5 py-1.5 rounded-md border text-xs font-semibold transition-colors shrink-0 ${
-                          monthFilter === m.value
-                            ? 'border-slate-900 bg-slate-900 text-white shadow-xs'
-                            : 'border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-                        }`}
-                      >
-                        {m.short}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              {/* Responsive Period & Filter Summary */}
-              <div className="border-t border-slate-100 pt-3 text-xs text-slate-600 space-y-2">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="text-slate-700 flex flex-wrap items-center gap-1.5">
-                    <span>
-                      Showing{' '}
-                      <strong className="font-mono tabular-nums text-slate-900">
-                        {filteredSummary.count}
-                      </strong>{' '}
-                      of {db.transactions.length} records
-                    </span>
-                    {(yearFilter !== 'ALL' || monthFilter !== 'ALL') && (
-                      <span className="font-semibold text-slate-900 bg-slate-100 px-2 py-0.5 rounded text-[11px]">
-                        {yearFilter === 'ALL' ? 'All Years' : yearFilter} ·{' '}
-                        {LEDGER_MONTH_OPTIONS.find((m) => m.value === monthFilter)?.label || 'All Months'}
-                      </span>
-                    )}
-                  </div>
-
-                  {(yearFilter !== 'ALL' ||
-                    monthFilter !== 'ALL' ||
-                    filterTab !== 'all' ||
-                    accountFilter !== 'ALL' ||
-                    memberFilter !== 'ALL' ||
-                    searchQuery.trim() !== '') && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setYearFilter('ALL');
-                        setMonthFilter('ALL');
-                        setFilterTab('all');
-                        setAccountFilter('ALL');
-                        setMemberFilter('ALL');
-                        setSearchQuery('');
-                      }}
-                      className="text-xs font-semibold text-emerald-800 underline hover:no-underline shrink-0"
-                    >
-                      Clear Filters
-                    </button>
-                  )}
-                </div>
-
-                {/* 3-Column Mobile-Friendly Metrics Cards */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1 text-xs">
-                  <div className="rounded-md bg-emerald-50/70 border border-emerald-100 px-3 py-2 flex items-center justify-between sm:flex-col sm:items-start sm:justify-start">
-                    <span className="text-slate-500 text-[10px] uppercase font-bold tracking-wider">
-                      Period Inflows
-                    </span>
-                    <strong className="font-mono tabular-nums text-emerald-700 text-xs sm:text-sm font-bold truncate">
-                      +{formatPHP(filteredSummary.inflows)}
-                    </strong>
-                  </div>
-
-                  <div className="rounded-md bg-red-50/70 border border-red-100 px-3 py-2 flex items-center justify-between sm:flex-col sm:items-start sm:justify-start">
-                    <span className="text-slate-500 text-[10px] uppercase font-bold tracking-wider">
-                      Period Outflows
-                    </span>
-                    <strong className="font-mono tabular-nums text-red-600 text-xs sm:text-sm font-bold truncate">
-                      -{formatPHP(filteredSummary.outflows)}
-                    </strong>
-                  </div>
-
-                  <div className="rounded-md bg-slate-50 border border-slate-200 px-3 py-2 flex items-center justify-between sm:flex-col sm:items-start sm:justify-start">
-                    <span className="text-slate-500 text-[10px] uppercase font-bold tracking-wider">
-                      Net Flow
-                    </span>
-                    <strong
-                      className={`font-mono tabular-nums text-xs sm:text-sm font-bold truncate ${
-                        filteredSummary.net >= 0 ? 'text-emerald-700' : 'text-red-600'
-                      }`}
-                    >
-                      {filteredSummary.net >= 0
-                        ? `+${formatPHP(filteredSummary.net)}`
-                        : formatPHP(filteredSummary.net)}
-                    </strong>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Filter & View Controls */}
-            <div className="rounded-lg border border-slate-200 bg-white p-3.5 sm:p-4 flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between min-w-0 max-w-full">
-              {/* Category Segmented Scrollable Strip on Mobile */}
-              <div className="w-full min-w-0 max-w-full overflow-x-auto pb-1 touch-pan-x no-scrollbar xl:w-auto">
-                <div className="inline-flex items-center gap-1 p-1 bg-slate-100 rounded-lg min-w-max">
-                  {(
-                    [
-                      ['all', 'All Activity'],
-                      ['Contribution', 'Contributions'],
-                      ['Medical Disbursement', 'Medical'],
-                      ['Internal Transfer', 'Fund Transfers'],
-                      ['Investment Yield', 'Fund Yield'],
-                      ['Reimbursement', 'Reimbursements'],
-                      ['Member Loan', 'Member Loans'],
-                      ['Loan Repayment', 'Loan Repayments']
-                    ] as [FilterTab, string][]
-                  ).map(([tabKey, label]) => (
-                    <button
-                      key={tabKey}
-                      type="button"
-                      onClick={() => setFilterTab(tabKey)}
-                      className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors whitespace-nowrap shrink-0 ${
-                        filterTab === tabKey
-                          ? 'bg-white text-slate-900 shadow-xs'
-                          : 'text-slate-600 hover:text-slate-900'
-                      }`}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-
-              {/* Search, Filter & Quick Options */}
-              <div className="flex flex-col sm:flex-row sm:items-center gap-2 w-full xl:w-auto">
-                <div className="relative w-full sm:w-52">
-                  <Search className="h-4 w-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="text"
-                    placeholder="Search transactions..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full rounded-md border border-slate-300 bg-white pl-9 pr-3 py-2 sm:py-1.5 text-base sm:text-xs text-slate-900 focus:border-slate-900 focus:outline-hidden"
-                  />
-                </div>
-
-                <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-                  <select
-                    value={memberFilter}
-                    onChange={(e) => setMemberFilter(e.target.value)}
-                    className="flex-1 sm:flex-initial rounded-md border border-slate-300 bg-white px-3 py-2 sm:py-1.5 text-base sm:text-xs font-medium text-slate-700 focus:border-slate-900 focus:outline-hidden"
-                  >
-                    <option value="ALL">All People &amp; Accounts</option>
-                    {db.members.map((m) => (
-                      <option key={m} value={m}>
-                        {m}
-                      </option>
-                    ))}
-                    <option value="Papa">Papa (Medical)</option>
-                    <option value="Mama">Mama (Medical)</option>
-                    <option value="Parents">Parents (Medical)</option>
-                    <option value="BPI Funds">Fund Transfers / Investments</option>
-                  </select>
-
-                  <button
-                    type="button"
-                    onClick={() => setGroupByMonth((v) => !v)}
-                    className={`flex-1 sm:flex-initial px-3 py-2 sm:py-1.5 text-xs font-semibold border rounded-md transition-colors whitespace-nowrap text-center ${
-                      groupByMonth
-                        ? 'border-slate-900 bg-slate-900 text-white'
-                        : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
-                    }`}
-                  >
-                    Group by Month
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setSortOrder((prev) =>
-                        prev === 'newest_desc' ? 'oldest_asc' : 'newest_desc'
-                      )
-                    }
-                    className="flex-1 sm:flex-initial px-3 py-2 sm:py-1.5 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50 transition-colors whitespace-nowrap flex items-center justify-center gap-1.5"
-                  >
-                    <ArrowUpDown className="h-3.5 w-3.5" />
-                    <span>{sortOrder === 'newest_desc' ? 'Newest' : 'Oldest'}</span>
-                  </button>
-
-                  {canManage && (
-                    <button
-                      type="button"
-                      onClick={() => setShowPriorBalanceConfig((v) => !v)}
-                      className="px-3 py-2 sm:py-1.5 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50 transition-colors whitespace-nowrap flex items-center justify-center gap-1.5"
-                    >
-                      <SlidersHorizontal className="h-3.5 w-3.5" />
-                      <span>Opening Bal</span>
-                    </button>
-                  )}
-
-                  <button
-                    type="button"
-                    onClick={handleDownloadCsv}
-                    className="px-3 py-2 sm:py-1.5 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50 transition-colors whitespace-nowrap flex items-center justify-center gap-1.5"
-                  >
-                    <Download className="h-3.5 w-3.5" />
-                    <span>CSV</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* Collapsible Opening Balance Configuration (Admin-only) */}
-            {canManage && showPriorBalanceConfig && (
-              <div className="rounded-lg border border-slate-200 bg-white p-5 space-y-3">
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                  <div>
-                    <h3 className="text-sm font-bold text-slate-900">
-                      Opening Balance Forward (Prior to April 27, 2026)
-                    </h3>
-                    <p className="text-xs text-slate-500">
-                      Cumulative balances accumulated prior to April 27, 2026 so your current
-                      account balances match{' '}
-                      <span className="font-mono tabular-nums font-semibold text-slate-700">
-                        ₱11,970.00 · ₱78,000.00 · ₱6,800.00
-                      </span>
-                      .
-                    </p>
-                  </div>
-                  <label className="flex items-center gap-2 text-xs font-semibold text-slate-800 cursor-pointer shrink-0">
-                    <input
-                      type="checkbox"
-                      checked={db.priorBalanceForward.included}
-                      onChange={(e) =>
-                        handleUpdatePriorBalanceForward({
-                          ...db.priorBalanceForward,
-                          included: e.target.checked
-                        })
-                      }
-                      className="h-4 w-4 rounded border-slate-300 text-slate-900"
-                    />
-                    <span>Include Opening Balance</span>
-                  </label>
-                </div>
-
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 pt-1">
-                  <div>
-                    <label className="block text-xs font-medium text-slate-600 mb-1">
-                      Opening Cash on Hand
-                    </label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={db.priorBalanceForward.amountOnHand}
-                      onChange={(e) => {
-                        const val = parseFloat(e.target.value) || 0;
-                        handleUpdatePriorBalanceForward({
-                          ...db.priorBalanceForward,
-                          amountOnHand: val
-                        });
-                      }}
-                      className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm font-mono tabular-nums"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-slate-600 mb-1">
-                      Opening BPI Money Market
-                    </label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={db.priorBalanceForward.bpiMoneyMarket}
-                      onChange={(e) => {
-                        const val = parseFloat(e.target.value) || 0;
-                        handleUpdatePriorBalanceForward({
-                          ...db.priorBalanceForward,
-                          bpiMoneyMarket: val
-                        });
-                      }}
-                      className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm font-mono tabular-nums"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-slate-600 mb-1">
-                      Opening BPI Short Term
-                    </label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={db.priorBalanceForward.bpiShortTerm}
-                      onChange={(e) => {
-                        const val = parseFloat(e.target.value) || 0;
-                        handleUpdatePriorBalanceForward({
-                          ...db.priorBalanceForward,
-                          bpiShortTerm: val
-                        });
-                      }}
-                      className="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm font-mono tabular-nums"
-                    />
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Modern Fintech Transaction Ledger (Zero Spreadsheet Gridlines) */}
-            <div className="rounded-lg border border-slate-200 bg-white overflow-hidden">
-              {/* Clean Column Headers */}
-              <div className="hidden md:grid md:grid-cols-12 items-center border-b border-slate-200 bg-slate-50/80 px-5 py-3 text-xs font-semibold text-slate-500">
-                <div className="col-span-2">Date</div>
-                <div className={canManage ? 'col-span-4' : 'col-span-5'}>
-                  Transaction & Category
-                </div>
-                <div className="col-span-3">Account Routing</div>
-                <div className="col-span-2 text-right">Amount & Fund Balance</div>
-                {canManage && <div className="col-span-1 text-right">Manage</div>}
-              </div>
-
-              {filteredRows.length === 0 ? (
-                <div className="px-6 py-12 text-center">
-                  <p className="text-sm font-semibold text-slate-800">
-                    No transactions match your current filter
-                  </p>
-                  <p className="mt-1 text-xs text-slate-500">
-                    Clear your filter selection to view all Clan E-Fund transactions.
-                  </p>
-                  <div className="mt-4 flex items-center justify-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setYearFilter('ALL');
-                        setMonthFilter('ALL');
-                        setFilterTab('all');
-                        setAccountFilter('ALL');
-                        setMemberFilter('ALL');
-                        setSearchQuery('');
-                      }}
-                      className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                    >
-                      Reset Filters
-                    </button>
-                    {canManage && (
-                      <button
-                        type="button"
-                        onClick={() => openNewEntryModal('contribution')}
-                        className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800"
-                      >
-                        Record Transaction
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ) : (
-                <div className="divide-y divide-slate-200">
-                  {groupedTransactions.map((group) => (
-                    <React.Fragment key={group.monthKey}>
-                      {groupByMonth && (
-                        <div className="flex items-center justify-between bg-slate-50/90 px-5 py-2 text-xs">
-                          <span className="font-bold text-slate-800">{group.monthLabel}</span>
-                          <div className="flex items-center gap-3 text-slate-500">
-                            <span>{group.items.length} entries</span>
-                            <span aria-hidden="true">·</span>
-                            <span>
-                              Net Monthly Flow:{' '}
-                              <strong
-                                className={`font-mono tabular-nums ${
-                                  group.netChange > 0
-                                    ? 'text-emerald-700'
-                                    : group.netChange < 0
-                                    ? 'text-red-600'
-                                    : 'text-slate-700'
-                                }`}
-                              >
-                                {group.netChange > 0
-                                  ? `+${formatPHP(group.netChange)}`
-                                  : formatPHP(group.netChange)}
-                              </strong>
-                            </span>
-                          </div>
-                        </div>
-                      )}
-
-                      {group.items.map((tx) => {
-                        const pres = resolveTransactionPresentation(tx);
-
-                        return (
-                          <div
-                            key={tx.id}
-                            className="group p-4 sm:px-5 sm:py-3.5 transition-colors hover:bg-slate-50/80 md:grid md:grid-cols-12 md:items-center md:gap-4 flex flex-col gap-2"
-                          >
-                            {/* Mobile Primary Header Row (Description & Unified Amount Side-by-Side) */}
-                            <div className="flex items-start justify-between gap-3 md:hidden">
-                              <div className="min-w-0">
-                                <div className="text-sm font-bold text-slate-900 leading-snug">
-                                  {pres.displayTitle}
-                                </div>
-                              </div>
-                              <div className="text-right shrink-0">
-                                <div
-                                  className={`text-base font-bold font-mono tabular-nums whitespace-nowrap ${
-                                    pres.isInternalTransfer
-                                      ? 'text-slate-800'
-                                      : pres.primaryAmount > 0
-                                      ? 'text-emerald-700'
-                                      : 'text-red-600'
-                                  }`}
-                                >
-                                  {pres.isInternalTransfer
-                                    ? `${formatPHP(pres.primaryAmount)} Transfer`
-                                    : pres.primaryAmount > 0
-                                    ? `+${formatPHP(pres.primaryAmount)}`
-                                    : formatPHP(pres.primaryAmount)}
-                                </div>
-                                <div className="text-[11px] font-mono tabular-nums text-slate-400">
-                                  Fund: {formatPHP(tx.runningTotalFund)}
-                                </div>
-                              </div>
-                            </div>
-
-                            {/* Desktop Date Column */}
-                            <div className="hidden md:block md:col-span-2">
-                              <div className="text-sm font-medium text-slate-900 font-mono tabular-nums">
-                                {formatHumanDate(tx.date)}
-                              </div>
-                            </div>
-
-                            {/* Desktop Description Column */}
-                            <div
-                              className={`hidden md:block ${
-                                canManage ? 'md:col-span-4' : 'md:col-span-5'
-                              } min-w-0`}
-                            >
-                              <div className="flex items-center gap-2">
-                                <span className="text-sm font-semibold text-slate-900 truncate">
-                                  {pres.displayTitle}
-                                </span>
-                              </div>
-                              <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
-                                <span
-                                  className={
-                                    tx.highlightAlert ? 'font-medium text-red-600' : undefined
-                                  }
-                                >
-                                  {tx.category}
-                                </span>
-                                {pres.showMemberBadge && (
-                                  <>
-                                    <span aria-hidden="true">·</span>
-                                    <span className="font-medium text-slate-700">
-                                      {tx.memberOrBeneficiary}
-                                    </span>
-                                  </>
-                                )}
-                                {pres.cleanNote && (
-                                  <>
-                                    <span aria-hidden="true">·</span>
-                                    <span className="text-slate-400 truncate max-w-[260px]">
-                                      {pres.cleanNote}
-                                    </span>
-                                  </>
-                                )}
-                              </div>
-                            </div>
-
-                            {/* Mobile Metadata Details Line */}
-                            <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500 md:hidden">
-                              <span className="font-mono tabular-nums font-medium text-slate-700">
-                                {formatHumanDate(tx.date)}
-                              </span>
-                              <span aria-hidden="true">·</span>
-                              <span
-                                className={
-                                  tx.highlightAlert ? 'font-medium text-red-600' : undefined
-                                }
-                              >
-                                {tx.category}
-                              </span>
-                              {pres.showMemberBadge && (
-                                <>
-                                  <span aria-hidden="true">·</span>
-                                  <span className="font-medium text-slate-800">
-                                    {tx.memberOrBeneficiary}
-                                  </span>
-                                </>
-                              )}
-                              {pres.cleanNote && (
-                                <>
-                                  <span aria-hidden="true">·</span>
-                                  <span className="text-slate-400 truncate max-w-[200px]">
-                                    {pres.cleanNote}
-                                  </span>
-                                </>
-                              )}
-                            </div>
-
-                            {/* Account Routing (Both Mobile and Desktop) */}
-                            <div className="md:col-span-3 text-xs text-slate-600">
-                              {pres.isInternalTransfer ? (
-                                <div className="inline-flex items-center gap-1.5 font-medium text-slate-800">
-                                  <span>{pres.fromAccountLabel}</span>
-                                  <ArrowRight className="h-3.5 w-3.5 text-slate-400 shrink-0" />
-                                  <span>{pres.toAccountLabel}</span>
-                                </div>
-                              ) : (
-                                <div className="font-medium text-slate-700">
-                                  {pres.accountSummaryLabel}
-                                </div>
-                              )}
-                              <div className="mt-0.5 text-xs text-slate-400 font-mono tabular-nums">
-                                {tx.amountOnHand !== 0 &&
-                                  `Cash Bal: ${formatPHP(tx.runningOnHand)}`}
-                                {tx.bpiMoneyMarket !== 0 &&
-                                  tx.amountOnHand === 0 &&
-                                  `MMF Bal: ${formatPHP(tx.runningMMF)}`}
-                                {tx.bpiShortTerm !== 0 &&
-                                  tx.amountOnHand === 0 &&
-                                  tx.bpiMoneyMarket === 0 &&
-                                  `Short Term Bal: ${formatPHP(tx.runningShortTerm)}`}
-                                {(tx.memberLoan || 0) !== 0 &&
-                                  tx.amountOnHand === 0 &&
-                                  tx.bpiMoneyMarket === 0 &&
-                                  tx.bpiShortTerm === 0 &&
-                                  `Loan Bal: ${formatPHP(tx.runningMemberLoan)}`}
-                              </div>
-                            </div>
-
-                            {/* Desktop Unified Amount & Running Total */}
-                            <div className="hidden md:block md:col-span-2 md:text-right">
-                              <div
-                                className={`text-sm font-bold font-mono tabular-nums whitespace-nowrap ${
-                                  pres.isInternalTransfer
-                                    ? 'text-slate-800'
-                                    : pres.primaryAmount > 0
-                                    ? 'text-emerald-700'
-                                    : 'text-red-600'
-                                }`}
-                              >
-                                {pres.isInternalTransfer
-                                  ? `${formatPHP(pres.primaryAmount)} Transfer`
-                                  : pres.primaryAmount > 0
-                                  ? `+${formatPHP(pres.primaryAmount)}`
-                                  : formatPHP(pres.primaryAmount)}
-                              </div>
-                              <div className="text-xs font-mono tabular-nums text-slate-400">
-                                Fund: {formatPHP(tx.runningTotalFund)}
-                              </div>
-                            </div>
-
-                            {/* Admin-Only Actions (Comfortable Touch Targets on Mobile) */}
-                            {canManage && (
-                              <div className="md:col-span-1 flex items-center justify-end gap-2 md:gap-1 pt-2 md:pt-0 border-t border-slate-100 md:border-0">
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setEditingEntry(tx);
-                                    setIsEntryModalOpen(true);
-                                  }}
-                                  className="flex items-center gap-1.5 px-3 py-1.5 md:p-1.5 rounded-md text-xs font-medium text-slate-700 md:text-slate-400 bg-slate-100 md:bg-transparent hover:bg-slate-200/70 hover:text-slate-900 min-h-[38px] md:min-h-0"
-                                  title="Edit transaction"
-                                  aria-label={`Edit ${tx.description}`}
-                                >
-                                  <Pencil className="h-3.5 w-3.5" />
-                                  <span className="md:hidden">Edit</span>
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    setConfirmModalState({
-                                      isOpen: true,
-                                      targetRow: tx
-                                    })
-                                  }
-                                  className="flex items-center gap-1.5 px-3 py-1.5 md:p-1.5 rounded-md text-xs font-medium text-red-600 md:text-slate-400 bg-red-50 md:bg-transparent hover:bg-red-100 md:hover:bg-red-50 hover:text-red-700 min-h-[38px] md:min-h-0"
-                                  title="Delete transaction"
-                                  aria-label={`Delete ${tx.description}`}
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                  <span className="md:hidden">Delete</span>
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </React.Fragment>
-                  ))}
-
-                  {/* Opening Balance Row at bottom/top of stream */}
-                  {db.priorBalanceForward.included &&
-                    filterTab === 'all' &&
-                    memberFilter === 'ALL' &&
-                    !searchQuery && (
-                      <div className="grid grid-cols-1 gap-2 bg-slate-50/70 px-5 py-3.5 text-xs text-slate-600 md:grid-cols-12 md:items-center md:gap-4">
-                        <div className="md:col-span-2 font-mono tabular-nums text-slate-500">
-                          Prior to Apr 27, 2026
-                        </div>
-                        <div className={canManage ? 'md:col-span-4' : 'md:col-span-5'}>
-                          <div className="font-semibold text-slate-800">
-                            {db.priorBalanceForward.label}
-                          </div>
-                          <div className="text-slate-500">
-                            Opening Cash: {formatPHP(db.priorBalanceForward.amountOnHand)} · MMF:{' '}
-                            {formatPHP(db.priorBalanceForward.bpiMoneyMarket)} · Short Term:{' '}
-                            {formatPHP(db.priorBalanceForward.bpiShortTerm)}
-                          </div>
-                        </div>
-                        <div className="md:col-span-3 text-slate-500">
-                          Initial Balance Forward
-                        </div>
-                        <div className="md:col-span-2 md:text-right font-mono tabular-nums font-bold text-slate-800">
-                          {formatPHP(
-                            db.priorBalanceForward.amountOnHand +
-                              db.priorBalanceForward.bpiMoneyMarket +
-                              db.priorBalanceForward.bpiShortTerm
-                          )}
-                        </div>
-                        {canManage && (
-                          <div className="md:col-span-1 text-right">
-                            <button
-                              type="button"
-                              onClick={() => setShowPriorBalanceConfig((v) => !v)}
-                              className="font-medium text-slate-600 hover:text-slate-900 underline"
-                            >
-                              Edit
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                </div>
-              )}
-
-              {/* Activity Ledger Pagination Bar */}
-              <PaginationBar
-                currentPage={ledgerPage}
-                totalItems={filteredRows.length}
-                pageSize={ledgerPageSize}
-                onPageChange={setLedgerPage}
-                onPageSizeChange={setLedgerPageSize}
-                pageSizeOptions={[10, 15, 25, 50]}
-                itemLabel="entries"
-              />
-
-              {/* Clean Ledger Summary Footer */}
-              <div className="border-t border-slate-200 bg-slate-50 px-5 py-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-slate-600">
-                  <span>
-                    Cash on Hand:{' '}
-                    <strong className="font-mono tabular-nums text-slate-900">
-                      {formatPHP(totals.amountOnHand)}
-                    </strong>
-                  </span>
-                  <span aria-hidden="true">·</span>
-                  <span>
-                    BPI Money Market:{' '}
-                    <strong className="font-mono tabular-nums text-slate-900">
-                      {formatPHP(totals.bpiMoneyMarket)}
-                    </strong>
-                  </span>
-                  <span aria-hidden="true">·</span>
-                  <span>
-                    BPI Short Term:{' '}
-                    <strong className="font-mono tabular-nums text-slate-900">
-                      {formatPHP(totals.bpiShortTerm)}
-                    </strong>
-                  </span>
-                  <span aria-hidden="true">·</span>
-                  <span>
-                    Member Loans:{' '}
-                    <strong className="font-mono tabular-nums text-amber-900">
-                      {formatPHP(totals.memberLoan)}
-                    </strong>
-                  </span>
-                </div>
-
-                <div className="flex items-center gap-2 text-sm">
-                  <span className="font-semibold text-slate-700">Total Clan E-Fund:</span>
-                  <span className="font-mono tabular-nums text-base font-bold text-emerald-700">
-                    {formatPHP(totals.totalFund)}
-                  </span>
-                </div>
-              </div>
-            </div>
-          </section>
+          <ActivityLedgerView
+            db={db}
+            totals={totals}
+            canManage={canManage}
+            filterTab={filterTab}
+            onFilterTabChange={setFilterTab}
+            accountFilter={accountFilter}
+            onAccountFilterChange={setAccountFilter}
+            memberFilter={memberFilter}
+            onMemberFilterChange={setMemberFilter}
+            yearFilter={yearFilter}
+            onYearFilterChange={setYearFilter}
+            monthFilter={monthFilter}
+            onMonthFilterChange={setMonthFilter}
+            searchQuery={searchQuery}
+            onSearchQueryChange={setSearchQuery}
+            sortOrder={sortOrder}
+            onToggleSortOrder={() =>
+              setSortOrder((prev) => (prev === 'newest_desc' ? 'oldest_asc' : 'newest_desc'))
+            }
+            showPriorBalanceConfig={showPriorBalanceConfig}
+            onTogglePriorBalanceConfig={() => setShowPriorBalanceConfig((v) => !v)}
+            availableYears={availableYears}
+            yearRowCounts={yearRowCounts}
+            monthOptions={LEDGER_MONTH_OPTIONS}
+            filteredRowsCount={filteredRows.length}
+            filteredSummary={filteredSummary}
+            paginatedRows={paginatedLedgerRows}
+            ledgerPage={ledgerPage}
+            ledgerPageSize={ledgerPageSize}
+            onLedgerPageChange={setLedgerPage}
+            onLedgerPageSizeChange={setLedgerPageSize}
+            formatHumanDate={formatHumanDate}
+            resolveTransactionPresentation={resolveTransactionPresentation}
+            onUpdatePriorBalanceForward={handleUpdatePriorBalanceForward}
+            onDownloadCsv={handleDownloadCsv}
+            onEditTransaction={(tx) => {
+              setEditingEntry(tx);
+              setIsEntryModalOpen(true);
+            }}
+            onRequestDeleteTransaction={(tx) =>
+              setConfirmModalState({
+                isOpen: true,
+                targetRow: tx
+              })
+            }
+            onOpenNewEntry={() => openNewEntryModal('contribution')}
+          />
         )}
 
         {/* SECTION 2: CLAN CONTRIBUTORS + MONTHLY CADENCE CARDS & MATRIX */}
@@ -3088,6 +2342,14 @@ export default function App() {
                           {formatPHP(stat.mmfContributed)}
                         </span>
                       </div>
+                      {stat.shortTermContributed > 0 && (
+                        <div className="flex justify-between">
+                          <span>To BPI Short Term</span>
+                          <span className="font-mono tabular-nums text-slate-700">
+                            {formatPHP(stat.shortTermContributed)}
+                          </span>
+                        </div>
+                      )}
                     </div>
                   </div>
 

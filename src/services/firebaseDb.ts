@@ -668,24 +668,86 @@ export function subscribeToSharedLedger(
   const unsubTransactions = onSnapshot(
     txQuery,
     (qSnap) => {
+      let needsLegacyLoanFix = false;
+      const rowsToPatchInFirestore: EFundTransaction[] = [];
+
       const rows: EFundTransaction[] = qSnap.docs.map((docSnap) => {
         const d = docSnap.data();
-        return {
-          id: docSnap.id,
+        const id = docSnap.id;
+        let category: EntryCategory = VALID_CATEGORIES.includes(d.category)
+          ? d.category
+          : 'Contribution';
+        const amountOnHand = typeof d.amountOnHand === 'number' ? d.amountOnHand : 0;
+        const bpiMoneyMarket = typeof d.bpiMoneyMarket === 'number' ? d.bpiMoneyMarket : 0;
+        const bpiShortTerm = typeof d.bpiShortTerm === 'number' ? d.bpiShortTerm : 0;
+        let memberLoan = typeof d.memberLoan === 'number' ? d.memberLoan : 0;
+        let highlightAlert = Boolean(d.highlightAlert);
+        const descLower = String(d.description || '').toLowerCase();
+        const memberLower = String(d.memberOrBeneficiary || '').toLowerCase();
+
+        // Automatically upgrade legacy Dondon loan & repayment rows that were originally seeded as Medical Disbursement / Reimbursement
+        if (
+          (id === 'row-36' || descLower.includes('hiram ni dondon')) &&
+          category === 'Medical Disbursement'
+        ) {
+          category = 'Member Loan';
+          memberLoan = Math.abs(amountOnHand + bpiMoneyMarket + bpiShortTerm);
+          highlightAlert = false;
+          needsLegacyLoanFix = true;
+        } else if (
+          (id === 'row-43' ||
+            id === 'row-90' ||
+            id === 'row-109' ||
+            (memberLower === 'dondon' &&
+              (descLower.includes('partial payment') || descLower.includes("dondon's payment")))) &&
+          category === 'Reimbursement'
+        ) {
+          category = 'Loan Repayment';
+          memberLoan = -Math.abs(amountOnHand + bpiMoneyMarket + bpiShortTerm);
+          highlightAlert = false;
+          needsLegacyLoanFix = true;
+        }
+
+        const rowObj: EFundTransaction = {
+          id,
           rowRef: typeof d.rowRef === 'number' ? d.rowRef : undefined,
           date: d.date || '2026-04-27',
           displayDate: d.displayDate || d.date || '4/27/2026',
           description: d.description || '',
-          category: VALID_CATEGORIES.includes(d.category) ? d.category : 'Contribution',
+          category,
           memberOrBeneficiary: d.memberOrBeneficiary || '',
-          amountOnHand: typeof d.amountOnHand === 'number' ? d.amountOnHand : 0,
-          bpiMoneyMarket: typeof d.bpiMoneyMarket === 'number' ? d.bpiMoneyMarket : 0,
-          bpiShortTerm: typeof d.bpiShortTerm === 'number' ? d.bpiShortTerm : 0,
-          memberLoan: typeof d.memberLoan === 'number' ? d.memberLoan : 0,
-          highlightAlert: Boolean(d.highlightAlert),
+          amountOnHand,
+          bpiMoneyMarket,
+          bpiShortTerm,
+          memberLoan,
+          highlightAlert,
           notes: d.notes || ''
         };
+
+        if (
+          (id === 'row-36' && d.category === 'Medical Disbursement') ||
+          ((id === 'row-43' || id === 'row-90' || id === 'row-109') &&
+            d.category === 'Reimbursement')
+        ) {
+          rowsToPatchInFirestore.push(rowObj);
+        }
+
+        return rowObj;
       });
+
+      if (
+        needsLegacyLoanFix &&
+        rowsToPatchInFirestore.length > 0 &&
+        auth.currentUser &&
+        isLedgerAdmin(auth.currentUser)
+      ) {
+        const adminUid = auth.currentUser.uid;
+        rowsToPatchInFirestore.forEach((tx) => {
+          saveTransactionToFirestore(adminUid, tx, tx.id, tx.rowRef ?? 100).catch(() => {
+            // Ignore non-fatal background migration errors
+          });
+        });
+      }
 
       rows.sort((a, b) => {
         const dateCmp = a.date.localeCompare(b.date);
