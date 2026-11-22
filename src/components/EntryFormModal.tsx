@@ -742,7 +742,13 @@ export const EntryFormModal: React.FC<EntryFormModalProps> = ({
                         setMemberLoan(cashAndBankSum);
                         setHighlightAlert(false);
                       } else if (nextCat === 'Loan Repayment') {
-                        setMemberLoan(-cashAndBankSum);
+                        const isPre2024Mhariz =
+                          Boolean(editingEntry) &&
+                          (editingEntry?.id === 'row-4' ||
+                            editingEntry?.id === 'row-6' ||
+                            editingEntry?.id === 'row-8' ||
+                            description.toLowerCase().includes('payment c/o mhariz'));
+                        setMemberLoan(isPre2024Mhariz ? 0 : -cashAndBankSum);
                         setHighlightAlert(false);
                       } else if (
                         category === 'Member Loan' ||

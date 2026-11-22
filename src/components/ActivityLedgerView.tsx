@@ -479,7 +479,9 @@ export const ActivityLedgerView: React.FC<ActivityLedgerViewProps> = ({
               <Wallet className="h-3.5 w-3.5 text-slate-500 shrink-0" />
               <span>Total Fund</span>
             </span>
-            <span className="text-xs text-slate-400">All 4 Accounts</span>
+            <span className="text-xs text-slate-400">
+              {totals.memberLoan > 0 ? 'All 4 Accounts' : 'All 3 Accounts'}
+            </span>
           </div>
           <div className="mt-2 text-2xl font-bold font-mono tabular-nums text-emerald-700">
             {formatReadablePHP(totals.totalFund, isSimple)}
@@ -1250,13 +1252,17 @@ export const ActivityLedgerView: React.FC<ActivityLedgerViewProps> = ({
                 {formatReadablePHP(totals.bpiShortTerm, isSimple)}
               </strong>
             </span>
-            <span aria-hidden="true">·</span>
-            <span>
-              Member Loans:{' '}
-              <strong className="font-mono tabular-nums text-amber-900">
-                {formatReadablePHP(totals.memberLoan, isSimple)}
-              </strong>
-            </span>
+            {totals.memberLoan > 0 && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span>
+                  Member Loans:{' '}
+                  <strong className="font-mono tabular-nums text-amber-900">
+                    {formatReadablePHP(totals.memberLoan, isSimple)}
+                  </strong>
+                </span>
+              </>
+            )}
           </div>
 
           <div className="flex items-center gap-2 text-sm">

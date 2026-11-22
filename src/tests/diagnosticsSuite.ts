@@ -27,6 +27,7 @@ import {
   defaultMamasRecordNote,
   formatIsoOrSerialDate,
   isLedgerAdmin,
+  normalizeEFundTransaction,
   normalizeMamasBucketLabels,
   normalizeMamasCustomBuckets,
   sanitizeCsvCell,
@@ -815,14 +816,17 @@ export function runAllUnitTests(): TestCaseResult[] {
     )
   );
 
-  // 16. Dondon's 4 Loan Transactions (row-36, row-43, row-90, row-109) Reconciliation to ₱0.00 Receivable
+  // 16. Dondon's 4 Loan Transactions & Pre-2024 Mhariz Loan Payments Reconciliation to ₱0.00 Receivable
   results.push(
     runSyncTest(
       'UT-16',
       'Unit Test',
       'Member Loan Reconciliation',
-      "Dondon's 4 loan transactions (row-36 Member Loan ₱50,000 + row-43, row-90, row-109 Loan Repayments -₱50,000) reconcile to ₱0.00 receivable",
+      "Dondon's 4 loan transactions (+₱50k / -₱50k) and Mhariz's pre-2024 payments (row-4, row-6, row-8) reconcile to ₱0.00 receivable without reducing Total Fund",
       () => {
+        const row4 = INITIAL_EFUND_DB.transactions.find((t) => t.id === 'row-4');
+        const row6 = INITIAL_EFUND_DB.transactions.find((t) => t.id === 'row-6');
+        const row8 = INITIAL_EFUND_DB.transactions.find((t) => t.id === 'row-8');
         const row36 = INITIAL_EFUND_DB.transactions.find((t) => t.id === 'row-36');
         const row43 = INITIAL_EFUND_DB.transactions.find((t) => t.id === 'row-43');
         const row90 = INITIAL_EFUND_DB.transactions.find((t) => t.id === 'row-90');
@@ -834,7 +838,21 @@ export function runAllUnitTests(): TestCaseResult[] {
           (row90?.memberLoan ?? 0) +
           (row109?.memberLoan ?? 0);
 
+        // Also verify calculateTotals clamps negative txMemberLoan to 0 so pre-ledger payments never reduce Total Fund
+        const negativeLoanMock = calculateTotals({
+          ...INITIAL_EFUND_DB,
+          transactions: INITIAL_EFUND_DB.transactions.map((t) =>
+            t.id === 'row-4' ? { ...t, memberLoan: -5000 } : t
+          )
+        });
+
         const passed =
+          row4?.category === 'Loan Repayment' &&
+          (row4?.memberLoan ?? 0) === 0 &&
+          row6?.category === 'Loan Repayment' &&
+          (row6?.memberLoan ?? 0) === 0 &&
+          row8?.category === 'Loan Repayment' &&
+          (row8?.memberLoan ?? 0) === 0 &&
           row36?.category === 'Member Loan' &&
           row36?.memberOrBeneficiary === 'Dondon' &&
           row36?.amountOnHand === -50000 &&
@@ -852,12 +870,14 @@ export function runAllUnitTests(): TestCaseResult[] {
           row109?.memberOrBeneficiary === 'Dondon' &&
           row109?.amountOnHand === 3200 &&
           row109?.memberLoan === -3200 &&
-          netLoanReceivable === 0;
+          netLoanReceivable === 0 &&
+          negativeLoanMock.memberLoan === 0 &&
+          negativeLoanMock.totalFund === 96770;
 
         return {
           passed,
-          expected: 'Loan +₱50,000 | Repayments -₱30,000, -₱16,800, -₱3,200 | Net Receivable ₱0.00',
-          actual: `row-36: ${formatPHP(row36?.memberLoan ?? 0)} | Repays: ${formatPHP(row43?.memberLoan ?? 0)}, ${formatPHP(row90?.memberLoan ?? 0)}, ${formatPHP(row109?.memberLoan ?? 0)} | Net: ${formatPHP(netLoanReceivable)}`
+          expected: 'Dondon Net ₱0.00 | Mhariz (row-4/6/8) Loan Repayment (memberLoan=0) | Clamped Total ₱96,770.00',
+          actual: `Dondon Net: ${formatPHP(netLoanReceivable)} | Mhariz Loan: ${formatPHP(row4?.memberLoan ?? 0)} | Total Fund: ${formatPHP(negativeLoanMock.totalFund)}`
         };
       }
     )
@@ -869,7 +889,7 @@ export function runAllUnitTests(): TestCaseResult[] {
       'UT-17',
       'Unit Test',
       'Member Contributions',
-      "Member contribution stats strictly count 'Contribution' entries and exclude 'Loan Repayment' and 'Reimbursement'",
+      "Member contribution stats strictly count 'Contribution' entries and exclude 'Loan Repayment' (Dondon & Mhariz) and 'Reimbursement'",
       () => {
         const contributionRows = INITIAL_EFUND_DB.transactions.filter(
           (t) => t.category === 'Contribution'
@@ -877,9 +897,8 @@ export function runAllUnitTests(): TestCaseResult[] {
         const dondonContribs = contributionRows.filter(
           (t) => t.memberOrBeneficiary.toLowerCase() === 'dondon'
         );
-        const dondonTotal = dondonContribs.reduce(
-          (sum, t) => sum + t.amountOnHand + t.bpiMoneyMarket + t.bpiShortTerm,
-          0
+        const mharizContribs = contributionRows.filter(
+          (t) => t.memberOrBeneficiary.toLowerCase() === 'mhariz'
         );
         const clanTotalContribs = contributionRows.reduce(
           (sum, t) => sum + t.amountOnHand + t.bpiMoneyMarket + t.bpiShortTerm,
@@ -888,13 +907,13 @@ export function runAllUnitTests(): TestCaseResult[] {
 
         const passed =
           dondonContribs.length === 0 &&
-          dondonTotal === 0 &&
-          clanTotalContribs === 182620;
+          mharizContribs.length === 0 &&
+          clanTotalContribs === 167620;
 
         return {
           passed,
-          expected: 'Dondon: ₱0.00 (0 contributions, ₱50k loan repayments excluded) | Total Clan Contributions: ₱182,620.00',
-          actual: `Dondon: ${formatPHP(dondonTotal)} (${dondonContribs.length} contributions) | Total Clan: ${formatPHP(clanTotalContribs)}`
+          expected: 'Dondon: ₱0.00 | Mhariz: ₱0.00 (loan repayments excluded) | Total Clan Contributions: ₱167,620.00',
+          actual: `Dondon: ${dondonContribs.length} | Mhariz: ${mharizContribs.length} | Total Clan: ${formatPHP(clanTotalContribs)}`
         };
       }
     )
@@ -912,7 +931,7 @@ export function runAllUnitTests(): TestCaseResult[] {
           (t) => t.category === 'Medical Disbursement' || t.category === 'Reimbursement'
         );
         const containsLoanRow = medicalRows.some((t) =>
-          ['row-36', 'row-43', 'row-90', 'row-109'].includes(t.id)
+          ['row-4', 'row-6', 'row-8', 'row-36', 'row-43', 'row-90', 'row-109'].includes(t.id)
         );
         const medicalDisbursementCount = medicalRows.filter(
           (t) => t.category === 'Medical Disbursement'
@@ -930,6 +949,116 @@ export function runAllUnitTests(): TestCaseResult[] {
           passed,
           expected: '24 Medical Disbursements + 0 Reimbursements | 0 Loan rows in Medical tab',
           actual: `${medicalDisbursementCount} Disbursements + ${reimbursementCount} Reimbursement | Loan rows leaked: ${containsLoanRow}`
+        };
+      }
+    )
+  );
+
+  // 19. Deterministic Transaction Normalization (`normalizeEFundTransaction`) & 109-Row Production Reconciliation
+  results.push(
+    runSyncTest(
+      'UT-19',
+      'Unit Test',
+      'Production Reconciliation & Normalization',
+      'normalizeEFundTransaction repairs pre-2024 Mhariz rows (memberLoan: -5000 -> 0), upgrades legacy Dondon loans, and reconciles 109-row Production ledger to ₱98,770.00',
+      () => {
+        // 1. Pre-2024 Mhariz row with corrupted memberLoan: -5000 from Production Firestore
+        const fixedMhariz = normalizeEFundTransaction(
+          {
+            id: 'row-4',
+            rowRef: 4,
+            date: '2024-01-27',
+            displayDate: '1/27/24',
+            description: 'Payment c/o Mhariz',
+            category: 'Loan Repayment',
+            memberOrBeneficiary: 'Mhariz',
+            amountOnHand: 5000,
+            bpiMoneyMarket: 0,
+            bpiShortTerm: 0,
+            memberLoan: -5000,
+            highlightAlert: true
+          },
+          'row-4'
+        );
+
+        // 2. Legacy Dondon row-36 Medical Disbursement -> Member Loan (+50,000)
+        const fixedDondonLoan = normalizeEFundTransaction(
+          {
+            id: 'row-36',
+            rowRef: 36,
+            date: '2024-11-18',
+            displayDate: '11/18/24',
+            description: 'Cash Borrowed by Dondon',
+            category: 'Medical Disbursement',
+            memberOrBeneficiary: 'Dondon',
+            amountOnHand: -50000,
+            bpiMoneyMarket: 0,
+            bpiShortTerm: 0,
+            memberLoan: 0
+          },
+          'row-36'
+        );
+
+        // 3. Simulate full 109-row Production ledger where row-4, row-6, row-8 had memberLoan: -5000
+        // plus the 2 additional Nov 2026 production contributions (Laura +₱1,500, Jonathan +₱500)
+        const simulatedProdRows = [
+          ...INITIAL_EFUND_DB.transactions.map((t) =>
+            ['row-4', 'row-6', 'row-8'].includes(t.id)
+              ? { ...t, category: 'Loan Repayment' as const, memberLoan: -5000 }
+              : t
+          ),
+          {
+            id: 'row-1795268543839',
+            rowRef: 112,
+            date: '2026-11-21',
+            displayDate: 'Nov 21, 2026',
+            description: 'Monthly E-Fund Contribution',
+            category: 'Contribution' as const,
+            memberOrBeneficiary: 'Laura',
+            amountOnHand: 1500,
+            bpiMoneyMarket: 0,
+            bpiShortTerm: 0,
+            memberLoan: 0
+          },
+          {
+            id: 'row-1795318093115',
+            rowRef: 113,
+            date: '2026-11-22',
+            displayDate: 'Nov 22, 2026',
+            description: 'Contribution for Dec 2025',
+            category: 'Contribution' as const,
+            memberOrBeneficiary: 'Jonathan',
+            amountOnHand: 500,
+            bpiMoneyMarket: 0,
+            bpiShortTerm: 0,
+            memberLoan: 0
+          }
+        ].map((raw) => normalizeEFundTransaction(raw, raw.id).transaction);
+
+        const prodTotals = calculateTotals({
+          ...INITIAL_EFUND_DB,
+          transactions: simulatedProdRows
+        });
+
+        const passed =
+          fixedMhariz.transaction.category === 'Loan Repayment' &&
+          fixedMhariz.transaction.memberLoan === 0 &&
+          fixedMhariz.transaction.highlightAlert === false &&
+          fixedMhariz.needsFirestorePatch === true &&
+          fixedDondonLoan.transaction.category === 'Member Loan' &&
+          fixedDondonLoan.transaction.memberLoan === 50000 &&
+          fixedDondonLoan.needsFirestorePatch === true &&
+          simulatedProdRows.length === 109 &&
+          prodTotals.amountOnHand === 13970 &&
+          prodTotals.bpiMoneyMarket === 78000 &&
+          prodTotals.bpiShortTerm === 6800 &&
+          prodTotals.memberLoan === 0 &&
+          prodTotals.totalFund === 98770;
+
+        return {
+          passed,
+          expected: 'Mhariz memberLoan=0 (patched) | Dondon +₱50k | 109 Prod rows -> Cash ₱13,970 | MMF ₱78,000 | ST ₱6,800 | Total ₱98,770.00',
+          actual: `MharizLoan=${fixedMhariz.transaction.memberLoan} | DondonLoan=${fixedDondonLoan.transaction.memberLoan} | Prod(${simulatedProdRows.length} rows): Cash ${formatPHP(prodTotals.amountOnHand)} | Total ${formatPHP(prodTotals.totalFund)}`
         };
       }
     )
@@ -1084,6 +1213,7 @@ export async function runAllProbeTests(
         );
         const unsyncedLoanRows = liveDb.transactions.filter((t) => {
           if (t.category !== 'Member Loan' && t.category !== 'Loan Repayment') return false;
+          if (['row-4', 'row-6', 'row-8'].includes(t.id)) return false;
           const cashBankDelta = t.amountOnHand + t.bpiMoneyMarket + t.bpiShortTerm;
           return cashBankDelta !== 0 && (t.memberLoan ?? 0) === 0;
         });

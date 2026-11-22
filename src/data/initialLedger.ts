@@ -168,11 +168,12 @@ export const INITIAL_EFUND_DB: ClanEFundDatabase = {
     "date": "2024-01-27",
     "displayDate": "1/27/2024",
     "description": "Payment c/o Mhariz",
-    "category": "Contribution",
+    "category": "Loan Repayment",
     "memberOrBeneficiary": "Mhariz",
     "amountOnHand": 5000.0,
     "bpiMoneyMarket": 0.0,
     "bpiShortTerm": 0.0,
+    "memberLoan": 0.0,
     "highlightAlert": false,
     "notes": "Payment c/o Mhariz"
   },
@@ -196,11 +197,12 @@ export const INITIAL_EFUND_DB: ClanEFundDatabase = {
     "date": "2024-02-18",
     "displayDate": "2/18/2024",
     "description": "Payment c/o Mhariz",
-    "category": "Contribution",
+    "category": "Loan Repayment",
     "memberOrBeneficiary": "Mhariz",
     "amountOnHand": 5000.0,
     "bpiMoneyMarket": 0.0,
     "bpiShortTerm": 0.0,
+    "memberLoan": 0.0,
     "highlightAlert": false,
     "notes": "Payment c/o Mhariz"
   },
@@ -224,11 +226,12 @@ export const INITIAL_EFUND_DB: ClanEFundDatabase = {
     "date": "2024-04-18",
     "displayDate": "4/18/2024",
     "description": "Payment c/o Mhariz",
-    "category": "Contribution",
+    "category": "Loan Repayment",
     "memberOrBeneficiary": "Mhariz",
     "amountOnHand": 5000.0,
     "bpiMoneyMarket": 0.0,
     "bpiShortTerm": 0.0,
+    "memberLoan": 0.0,
     "highlightAlert": false,
     "notes": "Payment c/o Mhariz"
   },
@@ -1701,7 +1704,7 @@ export function calculateTotals(db: ClanEFundDatabase) {
   const amountOnHand = Number((baseOnHand + txOnHand).toFixed(2));
   const bpiMoneyMarket = Number((baseMMF + txMMF).toFixed(2));
   const bpiShortTerm = Number((baseShortTerm + txShortTerm).toFixed(2));
-  const memberLoan = Number(txMemberLoan.toFixed(2));
+  const memberLoan = Number(Math.max(0, txMemberLoan).toFixed(2));
   const totalFund = Number((amountOnHand + bpiMoneyMarket + bpiShortTerm + memberLoan).toFixed(2));
 
   return {

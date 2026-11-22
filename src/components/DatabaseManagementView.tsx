@@ -979,7 +979,15 @@ export const DatabaseManagementView: React.FC<DatabaseManagementViewProps> = ({
 
                       <div className="flex items-center gap-2 shrink-0">
                         <span className="text-xs font-mono font-bold text-emerald-700">
-                          {formatPHP(tx.amountOnHand + tx.bpiMoneyMarket + tx.bpiShortTerm + (tx.memberLoan || 0))}
+                          {formatPHP(
+                            tx.category === 'Internal Transfer'
+                              ? Math.max(
+                                  Math.abs(tx.amountOnHand),
+                                  Math.abs(tx.bpiMoneyMarket),
+                                  Math.abs(tx.bpiShortTerm)
+                                )
+                              : tx.amountOnHand + tx.bpiMoneyMarket + tx.bpiShortTerm
+                          )}
                         </span>
                         <button
                           type="button"

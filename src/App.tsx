@@ -43,6 +43,7 @@ import {
   initAuth,
   isLedgerAdmin,
   logout,
+  normalizeEFundTransaction,
   normalizeMamasBucketLabels,
   normalizeMamasCustomBuckets,
   purgeMamasSavingsLocalCache,
@@ -328,37 +329,9 @@ export default function App() {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (parsed && Array.isArray(parsed.transactions) && parsed.transactions.length > 25) {
-          const normalizedTxs = parsed.transactions.map((t: EFundTransaction) => {
-            const descLower = String(t.description || '').toLowerCase();
-            const absCashAndBank = Math.abs(
-              (t.amountOnHand || 0) + (t.bpiMoneyMarket || 0) + (t.bpiShortTerm || 0)
-            );
-            if (
-              ((t.id === 'row-36' || descLower.includes('hiram ni dondon')) &&
-                t.category === 'Medical Disbursement') ||
-              (t.category === 'Member Loan' && (t.memberLoan || 0) === 0 && absCashAndBank > 0)
-            ) {
-              return {
-                ...t,
-                category: 'Member Loan' as EntryCategory,
-                memberLoan: absCashAndBank,
-                highlightAlert: false
-              };
-            }
-            if (
-              ((t.id === 'row-43' || t.id === 'row-90' || t.id === 'row-109') &&
-                t.category === 'Reimbursement') ||
-              (t.category === 'Loan Repayment' && (t.memberLoan || 0) === 0 && absCashAndBank > 0)
-            ) {
-              return {
-                ...t,
-                category: 'Loan Repayment' as EntryCategory,
-                memberLoan: -absCashAndBank,
-                highlightAlert: false
-              };
-            }
-            return t;
-          });
+          const normalizedTxs = parsed.transactions.map(
+            (t: EFundTransaction) => normalizeEFundTransaction(t, t.id).transaction
+          );
           return {
             ...INITIAL_EFUND_DB,
             ...parsed,
@@ -971,7 +944,7 @@ export default function App() {
                 ? rawTx.notes.trim().slice(0, 500)
                 : undefined;
 
-            return {
+            const candidateTx: EFundTransaction = {
               id: uniqueId,
               rowRef:
                 typeof rawTx.rowRef === 'number' && Number.isFinite(rawTx.rowRef)
@@ -992,6 +965,7 @@ export default function App() {
               highlightAlert: Boolean(rawTx.highlightAlert),
               ...(safeNotes ? { notes: safeNotes } : {})
             };
+            return normalizeEFundTransaction(candidateTx, uniqueId).transaction;
           }
         );
 
@@ -1133,7 +1107,7 @@ export default function App() {
       runningOnHand = Number((runningOnHand + tx.amountOnHand).toFixed(2));
       runningMMF = Number((runningMMF + tx.bpiMoneyMarket).toFixed(2));
       runningShortTerm = Number((runningShortTerm + tx.bpiShortTerm).toFixed(2));
-      runningMemberLoan = Number((runningMemberLoan + (tx.memberLoan || 0)).toFixed(2));
+      runningMemberLoan = Number(Math.max(0, runningMemberLoan + (tx.memberLoan || 0)).toFixed(2));
       const runningTotalFund = Number(
         (runningOnHand + runningMMF + runningShortTerm + runningMemberLoan).toFixed(2)
       );
@@ -1189,7 +1163,14 @@ export default function App() {
       if (accountFilter === 'amountOnHand' && tx.amountOnHand === 0) return false;
       if (accountFilter === 'bpiMoneyMarket' && tx.bpiMoneyMarket === 0) return false;
       if (accountFilter === 'bpiShortTerm' && tx.bpiShortTerm === 0) return false;
-      if (accountFilter === 'memberLoan' && (tx.memberLoan || 0) === 0) return false;
+      if (
+        accountFilter === 'memberLoan' &&
+        (tx.memberLoan || 0) === 0 &&
+        tx.category !== 'Member Loan' &&
+        tx.category !== 'Loan Repayment'
+      ) {
+        return false;
+      }
       if (yearFilter !== 'ALL' && !tx.date.startsWith(`${yearFilter}-`)) return false;
       if (monthFilter !== 'ALL' && tx.date.slice(5, 7) !== monthFilter) return false;
 
@@ -1279,6 +1260,7 @@ export default function App() {
         totalContributed: number;
         count: number;
         lastDate: string;
+        lastIsoDate: string;
         monthlyByMonth: Record<string, number>;
       }
     >();
@@ -1292,6 +1274,7 @@ export default function App() {
         totalContributed: 0,
         count: 0,
         lastDate: '—',
+        lastIsoDate: '',
         monthlyByMonth: {}
       });
     }
@@ -1307,6 +1290,7 @@ export default function App() {
           totalContributed: 0,
           count: 0,
           lastDate: '—',
+          lastIsoDate: '',
           monthlyByMonth: {}
         };
         const cashPos = Math.max(0, tx.amountOnHand);
@@ -1319,7 +1303,10 @@ export default function App() {
         current.shortTermContributed += stPos;
         current.totalContributed += rowSum;
         current.count += 1;
-        current.lastDate = formatHumanDate(tx.date);
+        if (!current.lastIsoDate || tx.date >= current.lastIsoDate) {
+          current.lastIsoDate = tx.date;
+          current.lastDate = formatHumanDate(tx.date);
+        }
 
         const monthKey = tx.date.slice(0, 7);
         current.monthlyByMonth[monthKey] = (current.monthlyByMonth[monthKey] || 0) + rowSum;
@@ -1419,6 +1406,21 @@ export default function App() {
         ),
     [db]
   );
+
+  // Net pre-ledger loan repayments collected into Cash/Bank (e.g., Mhariz's ₱15,000 in early 2024)
+  const netPreLedgerLoanCollected = useMemo(() => {
+    let loanOut = 0;
+    let loanIn = 0;
+    for (const t of db.transactions) {
+      const cashBank = Math.abs(t.amountOnHand + t.bpiMoneyMarket + t.bpiShortTerm);
+      if (t.category === 'Member Loan') {
+        loanOut += cashBank;
+      } else if (t.category === 'Loan Repayment') {
+        loanIn += cashBank;
+      }
+    }
+    return Math.max(0, Number((loanIn - loanOut).toFixed(2)));
+  }, [db]);
 
   const totalInvestedFunds = totals.bpiMoneyMarket + totals.bpiShortTerm;
   const priorTotalForward = db.priorBalanceForward.included
@@ -1762,8 +1764,14 @@ export default function App() {
                 <div className="mt-2 text-2xl font-bold font-mono tabular-nums text-slate-900">
                   +{formatPHP(totalContributionsOnly)}
                 </div>
-                <div className="mt-1.5 flex items-center gap-1.5 text-xs text-slate-500">
+                <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
                   <span>{contributorStats.length} active contributors</span>
+                  {netPreLedgerLoanCollected > 0 && (
+                    <>
+                      <span aria-hidden="true">·</span>
+                      <span>+{formatPHP(netPreLedgerLoanCollected)} loan collected</span>
+                    </>
+                  )}
                   {priorTotalForward > 0 && (
                     <>
                       <span aria-hidden="true">·</span>
@@ -2328,7 +2336,7 @@ export default function App() {
                   Clan Contributors & Monthly Cadence
                 </h1>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Member contribution cards and 2026 monthly consistency tracker
+                  Member contribution cards and {selectedMatrixYear} monthly consistency tracker
                 </p>
               </div>
             </div>
@@ -2576,7 +2584,7 @@ export default function App() {
                   <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 w-full sm:w-auto">
                     <button
                       type="button"
-                      onClick={() => openNewEntryModal('reimbursement', 'Dondon')}
+                      onClick={() => openNewEntryModal('reimbursement', 'Parents')}
                       className="rounded-md border border-slate-300 bg-white px-3 py-2.5 sm:px-3.5 sm:py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 text-center whitespace-nowrap active:scale-95"
                     >
                       + Reimbursement

@@ -577,6 +577,96 @@ export async function ensureSharedLedgerInitializedInFirestore(
 }
 
 /**
+ * Pure, deterministic transaction normalizer that upgrades legacy Dondon loan/repayment rows,
+ * keeps Mhariz's pre-2024 loan payments (row-4, row-6, row-8) at memberLoan = 0 so they
+ * neither inflate Member Contributions nor subtract from Total Fund Remaining,
+ * and repairs any Member Loan / Loan Repayment row where memberLoan was left at 0.
+ */
+export function normalizeEFundTransaction(
+  raw: Record<string, any>,
+  docId?: string
+): { transaction: EFundTransaction; needsFirestorePatch: boolean } {
+  const id = String(docId || raw.id || '');
+  let category: EntryCategory = VALID_CATEGORIES.includes(raw.category)
+    ? raw.category
+    : 'Contribution';
+  const amountOnHand =
+    typeof raw.amountOnHand === 'number' && Number.isFinite(raw.amountOnHand)
+      ? raw.amountOnHand
+      : 0;
+  const bpiMoneyMarket =
+    typeof raw.bpiMoneyMarket === 'number' && Number.isFinite(raw.bpiMoneyMarket)
+      ? raw.bpiMoneyMarket
+      : 0;
+  const bpiShortTerm =
+    typeof raw.bpiShortTerm === 'number' && Number.isFinite(raw.bpiShortTerm)
+      ? raw.bpiShortTerm
+      : 0;
+  const rawMemberLoan =
+    typeof raw.memberLoan === 'number' && Number.isFinite(raw.memberLoan) ? raw.memberLoan : 0;
+  let memberLoan = rawMemberLoan;
+  let highlightAlert = Boolean(raw.highlightAlert);
+  const descLower = String(raw.description || '').toLowerCase();
+  const memberLower = String(raw.memberOrBeneficiary || '').toLowerCase();
+
+  const absCashAndBank = Math.abs(amountOnHand + bpiMoneyMarket + bpiShortTerm);
+  const isMharizPre2024Payment =
+    id === 'row-4' ||
+    id === 'row-6' ||
+    id === 'row-8' ||
+    descLower.includes('payment c/o mhariz');
+
+  if (isMharizPre2024Payment) {
+    category = 'Loan Repayment';
+    memberLoan = 0;
+    highlightAlert = false;
+  } else if (
+    ((id === 'row-36' || descLower.includes('hiram ni dondon')) &&
+      category === 'Medical Disbursement') ||
+    (category === 'Member Loan' && memberLoan === 0 && absCashAndBank > 0)
+  ) {
+    category = 'Member Loan';
+    memberLoan = absCashAndBank;
+    highlightAlert = false;
+  } else if (
+    ((id === 'row-43' ||
+      id === 'row-90' ||
+      id === 'row-109' ||
+      (memberLower === 'dondon' &&
+        (descLower.includes('partial payment') ||
+          descLower.includes("dondon's payment") ||
+          descLower.includes('dondon payment')))) &&
+      category === 'Reimbursement') ||
+    (category === 'Loan Repayment' && memberLoan === 0 && absCashAndBank > 0)
+  ) {
+    category = 'Loan Repayment';
+    memberLoan = -absCashAndBank;
+    highlightAlert = false;
+  }
+
+  const transaction: EFundTransaction = {
+    id,
+    rowRef:
+      typeof raw.rowRef === 'number' && Number.isFinite(raw.rowRef) ? raw.rowRef : undefined,
+    date: raw.date || '2026-04-27',
+    displayDate: raw.displayDate || raw.date || '4/27/2026',
+    description: raw.description || '',
+    category,
+    memberOrBeneficiary: raw.memberOrBeneficiary || '',
+    amountOnHand,
+    bpiMoneyMarket,
+    bpiShortTerm,
+    memberLoan,
+    highlightAlert,
+    notes: raw.notes || ''
+  };
+
+  const needsFirestorePatch = raw.category !== category || rawMemberLoan !== memberLoan;
+
+  return { transaction, needsFirestorePatch };
+}
+
+/**
  * Subscribes to real-time updates on `/ledgers/clan-efund-main` and `/ledgers/clan-efund-main/transactions`.
  * Works for both the Admin (read/write) and View-Only Contributors (read-only).
  */
@@ -668,80 +758,20 @@ export function subscribeToSharedLedger(
   const unsubTransactions = onSnapshot(
     txQuery,
     (qSnap) => {
-      let needsLegacyLoanFix = false;
       const rowsToPatchInFirestore: EFundTransaction[] = [];
 
       const rows: EFundTransaction[] = qSnap.docs.map((docSnap) => {
-        const d = docSnap.data();
-        const id = docSnap.id;
-        let category: EntryCategory = VALID_CATEGORIES.includes(d.category)
-          ? d.category
-          : 'Contribution';
-        const amountOnHand = typeof d.amountOnHand === 'number' ? d.amountOnHand : 0;
-        const bpiMoneyMarket = typeof d.bpiMoneyMarket === 'number' ? d.bpiMoneyMarket : 0;
-        const bpiShortTerm = typeof d.bpiShortTerm === 'number' ? d.bpiShortTerm : 0;
-        let memberLoan = typeof d.memberLoan === 'number' ? d.memberLoan : 0;
-        let highlightAlert = Boolean(d.highlightAlert);
-        const descLower = String(d.description || '').toLowerCase();
-        const memberLower = String(d.memberOrBeneficiary || '').toLowerCase();
-
-        // Automatically upgrade legacy Dondon loan & repayment rows that were originally seeded as Medical Disbursement / Reimbursement,
-        // and repair any Member Loan / Loan Repayment row where memberLoan was left at 0 during a manual category edit.
-        const absCashAndBank = Math.abs(amountOnHand + bpiMoneyMarket + bpiShortTerm);
-        if (
-          ((id === 'row-36' || descLower.includes('hiram ni dondon')) &&
-            category === 'Medical Disbursement') ||
-          (category === 'Member Loan' && memberLoan === 0 && absCashAndBank > 0)
-        ) {
-          category = 'Member Loan';
-          memberLoan = absCashAndBank;
-          highlightAlert = false;
-          needsLegacyLoanFix = true;
-        } else if (
-          ((id === 'row-43' ||
-            id === 'row-90' ||
-            id === 'row-109' ||
-            (memberLower === 'dondon' &&
-              (descLower.includes('partial payment') ||
-                descLower.includes("dondon's payment") ||
-                descLower.includes('dondon payment')))) &&
-            category === 'Reimbursement') ||
-          (category === 'Loan Repayment' && memberLoan === 0 && absCashAndBank > 0)
-        ) {
-          category = 'Loan Repayment';
-          memberLoan = -absCashAndBank;
-          highlightAlert = false;
-          needsLegacyLoanFix = true;
+        const { transaction, needsFirestorePatch } = normalizeEFundTransaction(
+          docSnap.data(),
+          docSnap.id
+        );
+        if (needsFirestorePatch) {
+          rowsToPatchInFirestore.push(transaction);
         }
-
-        const rowObj: EFundTransaction = {
-          id,
-          rowRef: typeof d.rowRef === 'number' ? d.rowRef : undefined,
-          date: d.date || '2026-04-27',
-          displayDate: d.displayDate || d.date || '4/27/2026',
-          description: d.description || '',
-          category,
-          memberOrBeneficiary: d.memberOrBeneficiary || '',
-          amountOnHand,
-          bpiMoneyMarket,
-          bpiShortTerm,
-          memberLoan,
-          highlightAlert,
-          notes: d.notes || ''
-        };
-
-        if (
-          d.category !== category ||
-          (typeof d.memberLoan === 'number' ? d.memberLoan : 0) !== memberLoan
-        ) {
-          rowsToPatchInFirestore.push(rowObj);
-        }
-
-        return rowObj;
+        return transaction;
       });
 
       if (
-        needsLegacyLoanFix &&
         rowsToPatchInFirestore.length > 0 &&
         auth.currentUser &&
         isLedgerAdmin(auth.currentUser)

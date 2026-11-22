@@ -38,7 +38,7 @@ console.log('===================================================================
 // ---------------------------------------------------------------------------
 // PART 1: EXECUTE ALL SHARED UNIT TESTS FROM diagnosticsSuite.ts
 // ---------------------------------------------------------------------------
-console.log('--- Running Shared Unit Test Suite (UT-01 to UT-18) ---');
+console.log('--- Running Shared Unit Test Suite (UT-01 to UT-19) ---');
 const unitSuiteResults = runAllUnitTests();
 for (const ut of unitSuiteResults) {
   recordTest(ut.id, 'UNIT', ut.name, () => {
@@ -371,18 +371,24 @@ recordTest(
     );
     const appSource = readFileSync(resolve(process.cwd(), 'src/App.tsx'), 'utf-8');
 
-    // 1. Self-healing memberLoan normalization in firebaseDb.ts
-    assert.ok(
-      firebaseDbSource.includes("category === 'Member Loan' && memberLoan === 0 && absCashAndBank > 0") &&
-        firebaseDbSource.includes("category === 'Loan Repayment' && memberLoan === 0 && absCashAndBank > 0"),
-      'firebaseDb.ts must auto-repair Member Loan and Loan Repayment rows where memberLoan was 0'
+    const dbViewSource = readFileSync(
+      resolve(process.cwd(), 'src/components/DatabaseManagementView.tsx'),
+      'utf-8'
     );
 
-    // 2. EntryFormModal auto-syncs memberLoan when switching categories in Custom Split / Edit mode
+    // 1. Self-healing memberLoan normalization in firebaseDb.ts
+    assert.ok(
+      firebaseDbSource.includes('export function normalizeEFundTransaction(') &&
+        firebaseDbSource.includes("category === 'Member Loan' && memberLoan === 0 && absCashAndBank > 0") &&
+        firebaseDbSource.includes("category === 'Loan Repayment' && memberLoan === 0 && absCashAndBank > 0"),
+      'firebaseDb.ts must export normalizeEFundTransaction and auto-repair Member Loan and Loan Repayment rows'
+    );
+
+    // 2. EntryFormModal auto-syncs memberLoan when switching categories in Custom Split / Edit mode while guarding pre-2024 Mhariz payments
     assert.ok(
       entryModalSource.includes('setMemberLoan(cashAndBankSum)') &&
-        entryModalSource.includes('setMemberLoan(-cashAndBankSum)'),
-      'EntryFormModal.tsx must auto-sync memberLoan offset when category changes in Custom Split mode'
+        entryModalSource.includes('setMemberLoan(isPre2024Mhariz ? 0 : -cashAndBankSum)'),
+      'EntryFormModal.tsx must auto-sync memberLoan offset while keeping pre-2024 Mhariz repayments at 0'
     );
 
     // 3. ActivityLedgerView is flat chronological (no month grouping headers or Tagalog translation helpers)
@@ -392,18 +398,25 @@ recordTest(
       'ActivityLedgerView.tsx must render flat chronological rows with zero month-group headers or Tagalog translations'
     );
 
-    // 4. App.tsx strictly counts Contribution category in contributorStats and hides Member Loans card when memberLoan === 0
+    // 4. App.tsx strictly counts Contribution category in contributorStats, clamps runningMemberLoan >= 0, and hides Member Loans card when memberLoan === 0
     assert.ok(
       !appSource.includes("t.category === 'Contribution' || t.category === 'Reimbursement'"),
       'App.tsx contributorStats must strictly filter t.category === Contribution and exclude Reimbursements/Loan Repayments'
     );
     assert.ok(
-      appSource.includes('totals.memberLoan > 0 && (') &&
+      appSource.includes('Math.max(0, runningMemberLoan + (tx.memberLoan || 0))') &&
+        appSource.includes('totals.memberLoan > 0 && (') &&
         appSource.includes("totals.memberLoan > 0 ? 'All 4 Accounts →' : 'All 3 Accounts →'"),
-      'App.tsx must conditionally hide Member Loans (Receivable) card on the Dashboard when totals.memberLoan === 0'
+      'App.tsx must clamp runningMemberLoan >= 0 and conditionally hide Member Loans (Receivable) card on the Dashboard when totals.memberLoan === 0'
     );
 
-    return 'Verified loan self-healing, modal auto-sync, flat chronological Activity Ledger, contribution isolation, and conditional loan card';
+    // 5. DatabaseManagementView.tsx displays non-zero movement for Member Loan, Loan Repayment, and Internal Transfer
+    assert.ok(
+      !dbViewSource.includes('tx.amountOnHand + tx.bpiMoneyMarket + tx.bpiShortTerm + (tx.memberLoan || 0)'),
+      'DatabaseManagementView.tsx Firestore Explorer must not sum cash/bank with offsetting memberLoan to ₱0.00'
+    );
+
+    return 'Verified normalizeEFundTransaction, modal auto-sync, flat Activity Ledger, runningLoan clamp, and Explorer amount display';
   }
 );
 
