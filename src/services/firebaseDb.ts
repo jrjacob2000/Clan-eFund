@@ -685,25 +685,31 @@ export function subscribeToSharedLedger(
         const descLower = String(d.description || '').toLowerCase();
         const memberLower = String(d.memberOrBeneficiary || '').toLowerCase();
 
-        // Automatically upgrade legacy Dondon loan & repayment rows that were originally seeded as Medical Disbursement / Reimbursement
+        // Automatically upgrade legacy Dondon loan & repayment rows that were originally seeded as Medical Disbursement / Reimbursement,
+        // and repair any Member Loan / Loan Repayment row where memberLoan was left at 0 during a manual category edit.
+        const absCashAndBank = Math.abs(amountOnHand + bpiMoneyMarket + bpiShortTerm);
         if (
-          (id === 'row-36' || descLower.includes('hiram ni dondon')) &&
-          category === 'Medical Disbursement'
+          ((id === 'row-36' || descLower.includes('hiram ni dondon')) &&
+            category === 'Medical Disbursement') ||
+          (category === 'Member Loan' && memberLoan === 0 && absCashAndBank > 0)
         ) {
           category = 'Member Loan';
-          memberLoan = Math.abs(amountOnHand + bpiMoneyMarket + bpiShortTerm);
+          memberLoan = absCashAndBank;
           highlightAlert = false;
           needsLegacyLoanFix = true;
         } else if (
-          (id === 'row-43' ||
+          ((id === 'row-43' ||
             id === 'row-90' ||
             id === 'row-109' ||
             (memberLower === 'dondon' &&
-              (descLower.includes('partial payment') || descLower.includes("dondon's payment")))) &&
-          category === 'Reimbursement'
+              (descLower.includes('partial payment') ||
+                descLower.includes("dondon's payment") ||
+                descLower.includes('dondon payment')))) &&
+            category === 'Reimbursement') ||
+          (category === 'Loan Repayment' && memberLoan === 0 && absCashAndBank > 0)
         ) {
           category = 'Loan Repayment';
-          memberLoan = -Math.abs(amountOnHand + bpiMoneyMarket + bpiShortTerm);
+          memberLoan = -absCashAndBank;
           highlightAlert = false;
           needsLegacyLoanFix = true;
         }
@@ -725,9 +731,8 @@ export function subscribeToSharedLedger(
         };
 
         if (
-          (id === 'row-36' && d.category === 'Medical Disbursement') ||
-          ((id === 'row-43' || id === 'row-90' || id === 'row-109') &&
-            d.category === 'Reimbursement')
+          d.category !== category ||
+          (typeof d.memberLoan === 'number' ? d.memberLoan : 0) !== memberLoan
         ) {
           rowsToPatchInFirestore.push(rowObj);
         }

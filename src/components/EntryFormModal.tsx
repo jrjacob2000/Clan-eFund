@@ -730,7 +730,27 @@ export const EntryFormModal: React.FC<EntryFormModalProps> = ({
                   </span>
                   <select
                     value={category}
-                    onChange={(e) => setCategory(e.target.value as EntryCategory)}
+                    onChange={(e) => {
+                      const nextCat = e.target.value as EntryCategory;
+                      setCategory(nextCat);
+                      const cashAndBankSum = Math.abs(
+                        (Number(amountOnHand) || 0) +
+                          (Number(bpiMoneyMarket) || 0) +
+                          (Number(bpiShortTerm) || 0)
+                      );
+                      if (nextCat === 'Member Loan') {
+                        setMemberLoan(cashAndBankSum);
+                        setHighlightAlert(false);
+                      } else if (nextCat === 'Loan Repayment') {
+                        setMemberLoan(-cashAndBankSum);
+                        setHighlightAlert(false);
+                      } else if (
+                        category === 'Member Loan' ||
+                        category === 'Loan Repayment'
+                      ) {
+                        setMemberLoan(0);
+                      }
+                    }}
                     className="rounded border border-slate-300 bg-white px-2.5 py-1.5 text-base sm:text-xs text-slate-700"
                   >
                     <option value="Contribution">Contribution</option>

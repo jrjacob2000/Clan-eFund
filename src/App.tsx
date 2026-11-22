@@ -330,25 +330,30 @@ export default function App() {
         if (parsed && Array.isArray(parsed.transactions) && parsed.transactions.length > 25) {
           const normalizedTxs = parsed.transactions.map((t: EFundTransaction) => {
             const descLower = String(t.description || '').toLowerCase();
+            const absCashAndBank = Math.abs(
+              (t.amountOnHand || 0) + (t.bpiMoneyMarket || 0) + (t.bpiShortTerm || 0)
+            );
             if (
-              (t.id === 'row-36' || descLower.includes('hiram ni dondon')) &&
-              t.category === 'Medical Disbursement'
+              ((t.id === 'row-36' || descLower.includes('hiram ni dondon')) &&
+                t.category === 'Medical Disbursement') ||
+              (t.category === 'Member Loan' && (t.memberLoan || 0) === 0 && absCashAndBank > 0)
             ) {
               return {
                 ...t,
                 category: 'Member Loan' as EntryCategory,
-                memberLoan: Math.abs(t.amountOnHand + t.bpiMoneyMarket + t.bpiShortTerm),
+                memberLoan: absCashAndBank,
                 highlightAlert: false
               };
             }
             if (
-              (t.id === 'row-43' || t.id === 'row-90' || t.id === 'row-109') &&
-              t.category === 'Reimbursement'
+              ((t.id === 'row-43' || t.id === 'row-90' || t.id === 'row-109') &&
+                t.category === 'Reimbursement') ||
+              (t.category === 'Loan Repayment' && (t.memberLoan || 0) === 0 && absCashAndBank > 0)
             ) {
               return {
                 ...t,
                 category: 'Loan Repayment' as EntryCategory,
-                memberLoan: -Math.abs(t.amountOnHand + t.bpiMoneyMarket + t.bpiShortTerm),
+                memberLoan: -absCashAndBank,
                 highlightAlert: false
               };
             }
@@ -1729,7 +1734,9 @@ export default function App() {
                   <span className="text-xs font-semibold text-slate-600">
                     Total Fund Remaining
                   </span>
-                  <span className="text-xs text-slate-400">All 4 Accounts →</span>
+                  <span className="text-xs text-slate-400">
+                    {totals.memberLoan > 0 ? 'All 4 Accounts →' : 'All 3 Accounts →'}
+                  </span>
                 </div>
                 <div className="mt-2 text-2xl font-bold font-mono tabular-nums text-emerald-700">
                   {formatPHP(totals.totalFund)}
@@ -1813,9 +1820,15 @@ export default function App() {
               </button>
             </div>
 
-            {/* 4-Account Custody Breakdown (Immediate Buffer, Bank MMF, Short Term, Member Loans) */}
+            {/* Account Custody Breakdown (Immediate Buffer, Bank MMF, Short Term, plus Member Loans when > 0) */}
             <div className="rounded-lg border border-slate-200 bg-white overflow-hidden shadow-xs">
-              <div className="grid grid-cols-1 divide-y divide-slate-200 sm:grid-cols-2 lg:grid-cols-4 sm:divide-y-0 sm:divide-x">
+              <div
+                className={`grid grid-cols-1 divide-y divide-slate-200 sm:divide-y-0 sm:divide-x ${
+                  totals.memberLoan > 0
+                    ? 'sm:grid-cols-2 lg:grid-cols-4'
+                    : 'sm:grid-cols-3'
+                }`}
+              >
                 <button
                   type="button"
                   onClick={() => {
@@ -1900,32 +1913,34 @@ export default function App() {
                   </div>
                 </button>
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAccountFilter('memberLoan');
-                    setActiveSection('ledger');
-                  }}
-                  className="p-5 text-left transition-colors hover:bg-amber-50/40 bg-amber-50/20"
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-medium text-amber-900 flex items-center gap-1.5">
-                      <HandCoins className="h-3.5 w-3.5 text-amber-700 shrink-0" />
-                      <span>Member Loans (Receivable)</span>
-                    </span>
-                    <span className="text-xs font-mono tabular-nums text-amber-700 font-semibold">
-                      {loanPct.toFixed(1)}%
-                    </span>
-                  </div>
-                  <div className="mt-2 text-2xl font-bold font-mono tabular-nums text-amber-900">
-                    {formatPHP(totals.memberLoan)}
-                  </div>
-                  <div className="mt-1.5 flex items-center gap-1.5 text-xs text-amber-800">
-                    <span>Lent to clan members</span>
-                    <span aria-hidden="true">·</span>
-                    <span>Repayments collected</span>
-                  </div>
-                </button>
+                {totals.memberLoan > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAccountFilter('memberLoan');
+                      setActiveSection('ledger');
+                    }}
+                    className="p-5 text-left transition-colors hover:bg-amber-50/40 bg-amber-50/20"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-medium text-amber-900 flex items-center gap-1.5">
+                        <HandCoins className="h-3.5 w-3.5 text-amber-700 shrink-0" />
+                        <span>Member Loans (Receivable)</span>
+                      </span>
+                      <span className="text-xs font-mono tabular-nums text-amber-700 font-semibold">
+                        {loanPct.toFixed(1)}%
+                      </span>
+                    </div>
+                    <div className="mt-2 text-2xl font-bold font-mono tabular-nums text-amber-900">
+                      {formatPHP(totals.memberLoan)}
+                    </div>
+                    <div className="mt-1.5 flex items-center gap-1.5 text-xs text-amber-800">
+                      <span>Lent to clan members</span>
+                      <span aria-hidden="true">·</span>
+                      <span>Repayments collected</span>
+                    </div>
+                  </button>
+                )}
               </div>
 
               {/* Proportional Capital Allocation Bar & Admin Quick Log */}
@@ -1947,11 +1962,13 @@ export default function App() {
                       className="bg-emerald-600 transition-all"
                       title={`Short Term Fund: ${formatPHP(totals.bpiShortTerm)}`}
                     />
-                    <div
-                      style={{ width: `${Math.max(0, Math.min(100, loanPct))}%` }}
-                      className="bg-blue-600 transition-all"
-                      title={`Member Loans: ${formatPHP(totals.memberLoan)}`}
-                    />
+                    {totals.memberLoan > 0 && (
+                      <div
+                        style={{ width: `${Math.max(0, Math.min(100, loanPct))}%` }}
+                        className="bg-blue-600 transition-all"
+                        title={`Member Loans: ${formatPHP(totals.memberLoan)}`}
+                      />
+                    )}
                   </div>
                   <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-600">
                     <span>
@@ -1974,13 +1991,17 @@ export default function App() {
                         {stPct.toFixed(1)}%
                       </strong>
                     </span>
-                    <span aria-hidden="true">·</span>
-                    <span>
-                      Member Loans:{' '}
-                      <strong className="font-mono tabular-nums text-amber-900">
-                        {loanPct.toFixed(1)}%
-                      </strong>
-                    </span>
+                    {totals.memberLoan > 0 && (
+                      <>
+                        <span aria-hidden="true">·</span>
+                        <span>
+                          Member Loans:{' '}
+                          <strong className="font-mono tabular-nums text-amber-900">
+                            {loanPct.toFixed(1)}%
+                          </strong>
+                        </span>
+                      </>
+                    )}
                   </div>
                 </div>
 

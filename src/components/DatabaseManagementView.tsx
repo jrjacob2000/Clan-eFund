@@ -1320,10 +1320,10 @@ export const DatabaseManagementView: React.FC<DatabaseManagementViewProps> = ({
             <div className="border-b border-slate-200 bg-slate-50 px-5 py-3.5 flex items-center justify-between">
               <div>
                 <h4 className="text-sm font-bold text-slate-900">
-                  Deterministic Unit Tests (UT-01 to UT-12)
+                  Deterministic Unit Tests (UT-01 to {unitResults[unitResults.length - 1]?.id || 'UT-18'})
                 </h4>
                 <p className="text-xs text-slate-500">
-                  Pure unit tests for 4-bucket accounting, loan receivable derivation, custom buckets, Google Sheets 2-tab backup matrices, and schema clamping
+                  Pure unit tests for 4-bucket accounting, loan receivable reconciliation, contribution &amp; medical isolation, custom buckets, Google Sheets 2-tab backup matrices, and schema clamping
                 </p>
               </div>
               <span className="text-xs font-mono font-semibold text-slate-600">

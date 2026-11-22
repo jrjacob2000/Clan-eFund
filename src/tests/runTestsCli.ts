@@ -2,12 +2,8 @@ import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
-  ClanEFundDatabase,
   INITIAL_EFUND_DB,
   MAMAS_SAVINGS_DATA,
-  MamasSavingsState,
-  calculateMamasTotals,
-  calculateTotals,
   formatPHP
 } from '../data/initialLedger';
 import { PRODUCTION_FIREBASE_CONFIG } from '../services/firebaseDb';
@@ -42,7 +38,7 @@ console.log('===================================================================
 // ---------------------------------------------------------------------------
 // PART 1: EXECUTE ALL SHARED UNIT TESTS FROM diagnosticsSuite.ts
 // ---------------------------------------------------------------------------
-console.log('--- Running Shared Unit Test Suite (UT-01 to UT-13) ---');
+console.log('--- Running Shared Unit Test Suite (UT-01 to UT-18) ---');
 const unitSuiteResults = runAllUnitTests();
 for (const ut of unitSuiteResults) {
   recordTest(ut.id, 'UNIT', ut.name, () => {
@@ -55,66 +51,10 @@ for (const ut of unitSuiteResults) {
   });
 }
 
-// Additional Edge-Case Unit Tests
-recordTest(
-  'UT-14',
-  'UNIT',
-  'Internal Transfer between Cash on Hand, BPI Money Market, and BPI Short Term keeps Total Fund invariant',
-  () => {
-    const before = calculateTotals(INITIAL_EFUND_DB);
-    const afterTransferDb: ClanEFundDatabase = {
-      ...INITIAL_EFUND_DB,
-      transactions: [
-        ...INITIAL_EFUND_DB.transactions,
-        {
-          id: 'tx-transfer-test',
-          rowRef: 112,
-          date: '2026-11-01',
-          displayDate: 'Nov 1, 2026',
-          description: 'Sweep Cash to BPI Short Term',
-          category: 'Internal Transfer',
-          memberOrBeneficiary: 'BPI Short Term',
-          amountOnHand: -5000,
-          bpiMoneyMarket: 0,
-          bpiShortTerm: 5000,
-          memberLoan: 0
-        }
-      ]
-    };
-    const after = calculateTotals(afterTransferDb);
-    assert.equal(after.totalFund, before.totalFund);
-    assert.equal(after.amountOnHand, before.amountOnHand - 5000);
-    assert.equal(after.bpiShortTerm, before.bpiShortTerm + 5000);
-    return `Total invariant at ${formatPHP(after.totalFund)} (Cash ${formatPHP(after.amountOnHand)}, Short Term ${formatPHP(after.bpiShortTerm)})`;
-  }
-);
-
-recordTest(
-  'UT-15',
-  'UNIT',
-  'Empty Mama\'s Savings state (View-Only non-admin fallback) computes zero for all balances without leaking data',
-  () => {
-    const emptyState: MamasSavingsState = {
-      title: "Mama's Savings",
-      investBalance: 0,
-      mamaAtmBalance: 0,
-      loanToMhariz: 0,
-      totalSavings: 0,
-      records: []
-    };
-    const computed = calculateMamasTotals(emptyState);
-    assert.equal(computed.investBalance, 0);
-    assert.equal(computed.mamaAtmBalance, 0);
-    assert.equal(computed.loanToMhariz, 0);
-    assert.equal(computed.totalSavings, 0);
-    return 'All balances verified at ₱0.00 when records=[]';
-  }
-);
-
 // ---------------------------------------------------------------------------
 // PART 2: STATIC & CONFIG PROBE TESTS (SECURITY RULES, CONFIGS, DATA INTEGRITY)
 // ---------------------------------------------------------------------------
-console.log('\n--- Running Architecture, Configuration & Security Probe Suite (PT-01 to PT-09) ---');
+console.log('\n--- Running Architecture, Configuration & Security Probe Suite (PT-01 to PT-10) ---');
 
 recordTest(
   'PT-01',
@@ -409,6 +349,61 @@ recordTest(
     );
 
     return 'Verified App CSV sanitization, JSON import bounds, safe Drive URLs, clean public assets, and strict Firestore rules';
+  }
+);
+
+recordTest(
+  'PT-10',
+  'PROBE',
+  'Probe Loan Self-Healing Normalization, Flat Chronological Activity Ledger, Contribution Isolation, and Conditional Dashboard Loan Card',
+  () => {
+    const firebaseDbSource = readFileSync(
+      resolve(process.cwd(), 'src/services/firebaseDb.ts'),
+      'utf-8'
+    );
+    const entryModalSource = readFileSync(
+      resolve(process.cwd(), 'src/components/EntryFormModal.tsx'),
+      'utf-8'
+    );
+    const activityLedgerSource = readFileSync(
+      resolve(process.cwd(), 'src/components/ActivityLedgerView.tsx'),
+      'utf-8'
+    );
+    const appSource = readFileSync(resolve(process.cwd(), 'src/App.tsx'), 'utf-8');
+
+    // 1. Self-healing memberLoan normalization in firebaseDb.ts
+    assert.ok(
+      firebaseDbSource.includes("category === 'Member Loan' && memberLoan === 0 && absCashAndBank > 0") &&
+        firebaseDbSource.includes("category === 'Loan Repayment' && memberLoan === 0 && absCashAndBank > 0"),
+      'firebaseDb.ts must auto-repair Member Loan and Loan Repayment rows where memberLoan was 0'
+    );
+
+    // 2. EntryFormModal auto-syncs memberLoan when switching categories in Custom Split / Edit mode
+    assert.ok(
+      entryModalSource.includes('setMemberLoan(cashAndBankSum)') &&
+        entryModalSource.includes('setMemberLoan(-cashAndBankSum)'),
+      'EntryFormModal.tsx must auto-sync memberLoan offset when category changes in Custom Split mode'
+    );
+
+    // 3. ActivityLedgerView is flat chronological (no month grouping headers or Tagalog translation helpers)
+    assert.ok(
+      !activityLedgerSource.includes('formatMonthGroupLabel') &&
+        !activityLedgerSource.includes('getEnglishTranslation'),
+      'ActivityLedgerView.tsx must render flat chronological rows with zero month-group headers or Tagalog translations'
+    );
+
+    // 4. App.tsx strictly counts Contribution category in contributorStats and hides Member Loans card when memberLoan === 0
+    assert.ok(
+      !appSource.includes("t.category === 'Contribution' || t.category === 'Reimbursement'"),
+      'App.tsx contributorStats must strictly filter t.category === Contribution and exclude Reimbursements/Loan Repayments'
+    );
+    assert.ok(
+      appSource.includes('totals.memberLoan > 0 && (') &&
+        appSource.includes("totals.memberLoan > 0 ? 'All 4 Accounts →' : 'All 3 Accounts →'"),
+      'App.tsx must conditionally hide Member Loans (Receivable) card on the Dashboard when totals.memberLoan === 0'
+    );
+
+    return 'Verified loan self-healing, modal auto-sync, flat chronological Activity Ledger, contribution isolation, and conditional loan card';
   }
 );
 

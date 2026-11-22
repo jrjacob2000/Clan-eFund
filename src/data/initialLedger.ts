@@ -119,13 +119,13 @@ export const EMPTY_MAMAS_SAVINGS_STATE: MamasSavingsState = {
  */
 export const MAMAS_SAVINGS_DATA: MamasSavingsState = EMPTY_MAMAS_SAVINGS_STATE;
 
-export const APP_VERSION = '1.5.0';
+export const APP_VERSION = '1.6.0';
 
 export const INITIAL_EFUND_DB: ClanEFundDatabase = {
   schemaVersion: 4,
   clanName: 'Clan Emergency Fund (E-Fund)',
   currency: 'PHP',
-  lastUpdated: '2026-11-19T08:00:00.000Z',
+  lastUpdated: '2026-11-22T10:45:00.000Z',
   cashReserveTarget: 15000.0,
   bpiActualMarketValue: {
     bpiMoneyMarket: 78000.0,

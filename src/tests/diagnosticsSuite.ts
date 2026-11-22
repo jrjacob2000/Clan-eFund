@@ -742,6 +742,199 @@ export function runAllUnitTests(): TestCaseResult[] {
     )
   );
 
+  // 14. Internal Transfer Total Fund Invariance
+  results.push(
+    runSyncTest(
+      'UT-14',
+      'Unit Test',
+      'Clan E-Fund Accounting',
+      'Internal Transfer between Cash on Hand, BPI Money Market, and BPI Short Term keeps Total Fund invariant',
+      () => {
+        const before = calculateTotals(INITIAL_EFUND_DB);
+        const afterTransferDb: ClanEFundDatabase = {
+          ...INITIAL_EFUND_DB,
+          transactions: [
+            ...INITIAL_EFUND_DB.transactions,
+            {
+              id: 'tx-transfer-test',
+              rowRef: 112,
+              date: '2026-11-01',
+              displayDate: 'Nov 1, 2026',
+              description: 'Sweep Cash to BPI Short Term',
+              category: 'Internal Transfer',
+              memberOrBeneficiary: 'BPI Short Term',
+              amountOnHand: -5000,
+              bpiMoneyMarket: 0,
+              bpiShortTerm: 5000,
+              memberLoan: 0
+            }
+          ]
+        };
+        const after = calculateTotals(afterTransferDb);
+        const passed =
+          after.totalFund === before.totalFund &&
+          after.amountOnHand === before.amountOnHand - 5000 &&
+          after.bpiShortTerm === before.bpiShortTerm + 5000;
+        return {
+          passed,
+          expected: `Total invariant at ${formatPHP(before.totalFund)} | Cash -₱5,000 | Short Term +₱5,000`,
+          actual: `Total invariant at ${formatPHP(after.totalFund)} (Cash ${formatPHP(after.amountOnHand)}, Short Term ${formatPHP(after.bpiShortTerm)})`
+        };
+      }
+    )
+  );
+
+  // 15. Empty Mama's Savings Non-Admin Fallback Zero-Leak Verification
+  results.push(
+    runSyncTest(
+      'UT-15',
+      'Unit Test',
+      "Mama's Personal Savings",
+      "Empty Mama's Savings state (View-Only non-admin fallback) computes zero for all balances without leaking data",
+      () => {
+        const emptyState: MamasSavingsState = {
+          title: "Mama's Savings",
+          investBalance: 0,
+          mamaAtmBalance: 0,
+          loanToMhariz: 0,
+          totalSavings: 0,
+          records: []
+        };
+        const computed = calculateMamasTotals(emptyState);
+        const passed =
+          computed.investBalance === 0 &&
+          computed.mamaAtmBalance === 0 &&
+          computed.loanToMhariz === 0 &&
+          computed.totalSavings === 0;
+        return {
+          passed,
+          expected: 'Invest ₱0.00 | ATM ₱0.00 | Loan ₱0.00 | Total ₱0.00',
+          actual: `All balances verified at ${formatPHP(computed.totalSavings)} when records=[]`
+        };
+      }
+    )
+  );
+
+  // 16. Dondon's 4 Loan Transactions (row-36, row-43, row-90, row-109) Reconciliation to ₱0.00 Receivable
+  results.push(
+    runSyncTest(
+      'UT-16',
+      'Unit Test',
+      'Member Loan Reconciliation',
+      "Dondon's 4 loan transactions (row-36 Member Loan ₱50,000 + row-43, row-90, row-109 Loan Repayments -₱50,000) reconcile to ₱0.00 receivable",
+      () => {
+        const row36 = INITIAL_EFUND_DB.transactions.find((t) => t.id === 'row-36');
+        const row43 = INITIAL_EFUND_DB.transactions.find((t) => t.id === 'row-43');
+        const row90 = INITIAL_EFUND_DB.transactions.find((t) => t.id === 'row-90');
+        const row109 = INITIAL_EFUND_DB.transactions.find((t) => t.id === 'row-109');
+
+        const netLoanReceivable =
+          (row36?.memberLoan ?? 0) +
+          (row43?.memberLoan ?? 0) +
+          (row90?.memberLoan ?? 0) +
+          (row109?.memberLoan ?? 0);
+
+        const passed =
+          row36?.category === 'Member Loan' &&
+          row36?.memberOrBeneficiary === 'Dondon' &&
+          row36?.amountOnHand === -50000 &&
+          row36?.memberLoan === 50000 &&
+          row43?.category === 'Loan Repayment' &&
+          row43?.memberOrBeneficiary === 'Dondon' &&
+          row43?.amountOnHand === 30000 &&
+          row43?.memberLoan === -30000 &&
+          row90?.category === 'Loan Repayment' &&
+          row90?.memberOrBeneficiary === 'Dondon' &&
+          row90?.bpiMoneyMarket === 5000 &&
+          row90?.bpiShortTerm === 11800 &&
+          row90?.memberLoan === -16800 &&
+          row109?.category === 'Loan Repayment' &&
+          row109?.memberOrBeneficiary === 'Dondon' &&
+          row109?.amountOnHand === 3200 &&
+          row109?.memberLoan === -3200 &&
+          netLoanReceivable === 0;
+
+        return {
+          passed,
+          expected: 'Loan +₱50,000 | Repayments -₱30,000, -₱16,800, -₱3,200 | Net Receivable ₱0.00',
+          actual: `row-36: ${formatPHP(row36?.memberLoan ?? 0)} | Repays: ${formatPHP(row43?.memberLoan ?? 0)}, ${formatPHP(row90?.memberLoan ?? 0)}, ${formatPHP(row109?.memberLoan ?? 0)} | Net: ${formatPHP(netLoanReceivable)}`
+        };
+      }
+    )
+  );
+
+  // 17. Member Contribution Isolation (Excludes Loan Repayments & Reimbursements)
+  results.push(
+    runSyncTest(
+      'UT-17',
+      'Unit Test',
+      'Member Contributions',
+      "Member contribution stats strictly count 'Contribution' entries and exclude 'Loan Repayment' and 'Reimbursement'",
+      () => {
+        const contributionRows = INITIAL_EFUND_DB.transactions.filter(
+          (t) => t.category === 'Contribution'
+        );
+        const dondonContribs = contributionRows.filter(
+          (t) => t.memberOrBeneficiary.toLowerCase() === 'dondon'
+        );
+        const dondonTotal = dondonContribs.reduce(
+          (sum, t) => sum + t.amountOnHand + t.bpiMoneyMarket + t.bpiShortTerm,
+          0
+        );
+        const clanTotalContribs = contributionRows.reduce(
+          (sum, t) => sum + t.amountOnHand + t.bpiMoneyMarket + t.bpiShortTerm,
+          0
+        );
+
+        const passed =
+          dondonContribs.length === 0 &&
+          dondonTotal === 0 &&
+          clanTotalContribs === 182620;
+
+        return {
+          passed,
+          expected: 'Dondon: ₱0.00 (0 contributions, ₱50k loan repayments excluded) | Total Clan Contributions: ₱182,620.00',
+          actual: `Dondon: ${formatPHP(dondonTotal)} (${dondonContribs.length} contributions) | Total Clan: ${formatPHP(clanTotalContribs)}`
+        };
+      }
+    )
+  );
+
+  // 18. Medical Assistance Ledger Filter Isolation (Excludes Member Loan & Loan Repayment)
+  results.push(
+    runSyncTest(
+      'UT-18',
+      'Unit Test',
+      'Medical Assistance Ledger',
+      "Medical Assistance ledger includes only 'Medical Disbursement' and 'Reimbursement' and excludes loan transactions",
+      () => {
+        const medicalRows = INITIAL_EFUND_DB.transactions.filter(
+          (t) => t.category === 'Medical Disbursement' || t.category === 'Reimbursement'
+        );
+        const containsLoanRow = medicalRows.some((t) =>
+          ['row-36', 'row-43', 'row-90', 'row-109'].includes(t.id)
+        );
+        const medicalDisbursementCount = medicalRows.filter(
+          (t) => t.category === 'Medical Disbursement'
+        ).length;
+        const reimbursementCount = medicalRows.filter(
+          (t) => t.category === 'Reimbursement'
+        ).length;
+
+        const passed =
+          !containsLoanRow &&
+          medicalDisbursementCount === 24 &&
+          reimbursementCount === 0;
+
+        return {
+          passed,
+          expected: '24 Medical Disbursements + 0 Reimbursements | 0 Loan rows in Medical tab',
+          actual: `${medicalDisbursementCount} Disbursements + ${reimbursementCount} Reimbursement | Loan rows leaked: ${containsLoanRow}`
+        };
+      }
+    )
+  );
+
   return results;
 }
 
@@ -863,13 +1056,13 @@ export async function runAllProbeTests(
     )
   );
 
-  // PROBE 4: Live In-Memory vs Calculated Accounting Reconciliation Probe
+  // PROBE 4: Live In-Memory vs Calculated Accounting & Loan Receivable Reconciliation Probe
   results.push(
     await runAsyncTest(
       'PT-04',
       'Probe Test',
       'Data Integrity & Reconciliation',
-      'Live Clan E-Fund state has valid dates, finite numbers, and 4-bucket sum equals Total Fund',
+      'Live Clan E-Fund state has valid dates, finite numbers, reconciled loan offsets, and 4-bucket sum equals Total Fund',
       async () => {
         const totals = calculateTotals(liveDb);
         const sumOfFour = Number(
@@ -889,11 +1082,19 @@ export async function runAllProbeTests(
             !Number.isFinite(t.bpiShortTerm) ||
             !Number.isFinite(t.memberLoan ?? 0)
         );
-        const passed = sumOfFour === totals.totalFund && invalidRows.length === 0;
+        const unsyncedLoanRows = liveDb.transactions.filter((t) => {
+          if (t.category !== 'Member Loan' && t.category !== 'Loan Repayment') return false;
+          const cashBankDelta = t.amountOnHand + t.bpiMoneyMarket + t.bpiShortTerm;
+          return cashBankDelta !== 0 && (t.memberLoan ?? 0) === 0;
+        });
+        const passed =
+          sumOfFour === totals.totalFund &&
+          invalidRows.length === 0 &&
+          unsyncedLoanRows.length === 0;
         return {
           passed,
-          expected: `4-bucket sum === ${formatPHP(totals.totalFund)} | 0 malformed rows`,
-          actual: `4-bucket sum: ${formatPHP(sumOfFour)} | ${invalidRows.length} malformed rows across ${liveDb.transactions.length} entries`
+          expected: `4-bucket sum === ${formatPHP(totals.totalFund)} | 0 malformed rows | 0 unsynced loan offsets`,
+          actual: `4-bucket sum: ${formatPHP(sumOfFour)} | Loan Receivable: ${formatPHP(totals.memberLoan)} | ${invalidRows.length} malformed | ${unsyncedLoanRows.length} unsynced loans`
         };
       }
     )
